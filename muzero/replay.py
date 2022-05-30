@@ -16,10 +16,9 @@ class Transition(NamedTuple):
     pi_prob: Optional[np.ndarray]
     value: Optional[float]  # n-step value for atari, (or game final score for board games)
     reward: Optional[float]
-    done: Optional[bool]
 
 
-TransitionStructure = Transition(state=None, action=None, pi_prob=None, value=None, reward=None, done=None)
+TransitionStructure = Transition(state=None, action=None, pi_prob=None, value=None, reward=None)
 
 
 class PrioritizedReplay(Generic[ReplayStructure]):
@@ -53,14 +52,13 @@ class PrioritizedReplay(Generic[ReplayStructure]):
             priority = 1e-8  # Avoid NaNs
 
         index = self._num_added % self._capacity
-        self._storage[index] = item  # encoder(item)
+        self._storage[index] = encoder(item)
         self._priorities[index] = priority
         self._num_added += 1
 
     def get(self, indices: Sequence[int]) -> List[Transition]:
         """Retrieves items by indices."""
-        # return [decoder(self._storage[i]) for i in indices]
-        return [self._storage[i] for i in indices]
+        return [decoder(self._storage[i]) for i in indices]
 
     def sample(self, batch_size: int) -> Tuple[List[Transition], np.ndarray, np.ndarray]:
         """Samples batch of items from replay uniformly, with replacement."""

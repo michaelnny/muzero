@@ -35,6 +35,7 @@ class TensorboardEpisodTracker:
         self._start = timeit.default_timer()
 
     def step(self, reward, done) -> None:
+        """Accumulate episode rewards and steps statistics."""
         self._current_episode_rewards.append(reward)
 
         self._num_steps_since_reset += 1
@@ -80,7 +81,6 @@ class TensorboardEpisodTracker:
 class TensorboardLearnerTracker:
     """TensorboardLearnerTracker to write to tensorboard"""
 
-    # def __init__(self, log_dir: str):
     def __init__(self, writer: SummaryWriter):
         self._num_steps_since_reset = None
         self._start = None
@@ -92,15 +92,19 @@ class TensorboardLearnerTracker:
         self._start = timeit.default_timer()
 
     def step(self, loss, lr) -> None:
+        """Log training loss statistics."""
         self._num_steps_since_reset += 1
-        tb_steps = self._num_steps_since_reset
 
-        # tracker per step
-        self._writer.add_scalar('learner(train_steps)/loss', loss, tb_steps)
-        self._writer.add_scalar('learner(train_steps)/learning_rate', lr, tb_steps)
+        # To improve performance, log per 100 train steps.
+        if self._num_steps_since_reset % 100 == 0:
+            # tracker per step
+            self._writer.add_scalar('learner(train_steps)/loss', loss, self._num_steps_since_reset)
+            self._writer.add_scalar('learner(train_steps)/learning_rate', lr, self._num_steps_since_reset)
 
-        time_stats = self.get_time_stat()
-        self._writer.add_scalar('learner(train_steps)/step_rate(minutes)', time_stats['step_rate'] / 60, tb_steps)
+            time_stats = self.get_time_stat()
+            self._writer.add_scalar(
+                'learner(train_steps)/step_rate(minutes)', time_stats['step_rate'] / 60, self._num_steps_since_reset
+            )
 
     def get_time_stat(self) -> Mapping[Text, float]:
         """Returns statistics as a dictionary."""
@@ -114,6 +118,25 @@ class TensorboardLearnerTracker:
             'num_steps': self._num_steps_since_reset,
             'duration': duration,
         }
+
+
+class TensorboardEvaluatorTracker:
+    """TensorboardEvaluatorTracker to write to tensorboard"""
+
+    def __init__(self, writer: SummaryWriter):
+        self._num_steps_since_reset = None
+        self._writer = writer
+
+    def reset(self) -> None:
+        """Resets all gathered statistics, not to be called between episodes."""
+        self._num_steps_since_reset = 0
+
+    def step(self, elo, episode_steps, train_steps) -> None:
+        self._num_steps_since_reset = train_steps
+
+        # tracker per checkpoint
+        self._writer.add_scalar('evaluator(train_steps)/elo_rating', elo, self._num_steps_since_reset)
+        self._writer.add_scalar('evaluator(train_steps)/episode_steps', episode_steps, self._num_steps_since_reset)
 
 
 def make_self_play_trackers(run_log_dir='actor'):
@@ -155,4 +178,25 @@ def make_learner_trackers(run_log_dir='learner'):
 
     return [
         TensorboardLearnerTracker(writer),
+    ]
+
+
+def make_evaluator_trackers(run_log_dir='evaluator'):
+    """
+    Create trackers for the evaluator run.
+
+    Args:
+        run_log_dir: tensorboard run log directory.
+    """
+
+    tb_log_dir = Path(f'runs/{run_log_dir}')
+
+    # Remove existing log directory
+    if tb_log_dir.exists() and tb_log_dir.is_dir():
+        shutil.rmtree(tb_log_dir)
+
+    writer = SummaryWriter(tb_log_dir)
+
+    return [
+        TensorboardEvaluatorTracker(writer),
     ]

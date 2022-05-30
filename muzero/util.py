@@ -1,8 +1,4 @@
-from typing import NamedTuple, Optional, Tuple
-import numpy as np
 import torch
-from torch import nn
-import torch.nn.functional as F
 
 
 def signed_hyperbolic(x: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
@@ -17,16 +13,31 @@ def signed_parabolic(x: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
 
 
 def normalize_hidden_state(x: torch.Tensor) -> torch.Tensor:
-    """Normalize hidden state (by channel) in range [0, 1]"""
-    _min = torch.min(x, dim=1, keepdim=True)[0]
-    _max = torch.max(x, dim=1, keepdim=True)[0]
-    return (x - _min) / (_max - _min + 1e-8)
+    """Normalize hidden state to the range [0, 1]"""
+    orig_shape = x.shape
+
+    x_flatten = torch.flatten(x, 1, -1)
+
+    _min = torch.min(x_flatten, dim=1, keepdim=True)[0]
+    _max = torch.max(x_flatten, dim=1, keepdim=True)[0]
+    normalized = (x_flatten - _min) / (_max - _min)
+    normalized = normalized.view(orig_shape)
+    return normalized
 
 
-def support_to_scalar(logits: torch.Tensor, supports: torch.Tensor) -> torch.Tensor:
+def logits_to_transformed_expected_value(logits: torch.Tensor, supports: torch.Tensor) -> torch.Tensor:
     """
-    Transform a categorical representation to a scalar
-    See paper appendix Network Architecture
+    Given raw logits (could be either reward or state value), do the following operations:
+        - apply softmax
+        - compute the expected scalar value
+        - apply `signed_parabolic` transform function
+
+    Args:
+        logits: 2D tensor raw logits of the network output, shape [B, N].
+        supports: vector of support for the computeation, shape [N,].
+
+    Returns:
+        a 2D tensor which represent the transformed expected value, shape [B, 1].
     """
 
     # Compute expected scalar.
@@ -34,21 +45,28 @@ def support_to_scalar(logits: torch.Tensor, supports: torch.Tensor) -> torch.Ten
     support = supports.to(device=logits.device, dtype=probs.dtype).expand(probs.shape)
     x = torch.sum(support.detach() * probs, dim=1, keepdim=True)
 
-    # Apply rescaling funciton.
+    # Apply transform funciton.
     x = signed_parabolic(x)
     return x
 
 
-def scalar_to_support(x: torch.Tensor, support_size: int) -> torch.Tensor:
+def scalar_to_categorical_probabilities(x: torch.Tensor, support_size: int) -> torch.Tensor:
     """
-    Transform a scalar to a categorical representation with (2 * support_size + 1) categories
-    See paper appendix Network Architecture
+    Given scalar value (could be either reward or state value), do the following operations:
+        - apply inverse of `signed_hyperbolic`
+        - project the values onto support base according to the MuZero paper.
+
+    Args:
+        x: 2D tensor contains the scalar values, shape [B, T].
+        support_size: the size of the support to project on to.
+
+    Returns:
+        a 3D tensor which represent the transformed and projected probabilities, shape [B, T, support_size].
     """
 
-    # Apply inverse rescaling funciton.
+    # Apply inverse transform funciton.
     x = signed_hyperbolic(x)
 
-    # B, T = x.shape
     max_size = (support_size - 1) // 2
     min_size = -max_size
 

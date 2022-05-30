@@ -1,3 +1,4 @@
+# Lint as: python3
 """Pseudocode description of the MuZero algorithm."""
 # pylint: disable=unused-argument
 # pylint: disable=missing-docstring
@@ -6,17 +7,17 @@
 import collections
 import math
 import typing
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import numpy
-import tensorflow.compat.v1 as tf
+import tensorflow as tf
 
 ##########################
 ####### Helpers ##########
 
-MAXIMUM_FLOAT_VALUE = float("inf")
+MAXIMUM_FLOAT_VALUE = float('inf')
 
-KnownBounds = collections.namedtuple("KnownBounds", ["min", "max"])
+KnownBounds = collections.namedtuple('KnownBounds', ['min', 'max'])
 
 
 class MinMaxStats(object):
@@ -276,10 +277,13 @@ class Game(object):
             for i, reward in enumerate(self.rewards[current_index:bootstrap_index]):
                 value += reward * self.discount**i  # pytype: disable=unsupported-operands
 
+            # For simplicity the network always predicts the most recently received
+            # reward, even for the initial representation network where we already
+            # know this reward.
             if current_index > 0 and current_index <= len(self.rewards):
                 last_reward = self.rewards[current_index - 1]
             else:
-                last_reward = None
+                last_reward = 0
 
             if current_index < len(self.root_values):
                 targets.append((value, last_reward, self.child_visits[current_index]))
@@ -405,20 +409,16 @@ def play_game(config: MuZeroConfig, network: Network) -> Game:
     game = config.new_game()
 
     while not game.terminal() and len(game.history) < config.max_moves:
-        min_max_stats = MinMaxStats(config.known_bounds)
-
         # At the root of the search tree we use the representation function to
         # obtain a hidden state given the current observation.
         root = Node(0)
         current_observation = game.make_image(-1)
-        network_output = network.initial_inference(current_observation)
-        expand_node(root, game.to_play(), game.legal_actions(), network_output)
-        backpropagate([root], network_output.value, game.to_play(), config.discount, min_max_stats)
+        expand_node(root, game.to_play(), game.legal_actions(), network.initial_inference(current_observation))
         add_exploration_noise(config, root)
 
         # We then run a Monte Carlo Tree Search using only action sequences and the
         # model learned by the network.
-        run_mcts(config, root, game.action_history(), network, min_max_stats)
+        run_mcts(config, root, game.action_history(), network)
         action = select_action(config, len(game.history), root, network)
         game.apply(action)
         game.store_search_statistics(root)
@@ -429,7 +429,9 @@ def play_game(config: MuZeroConfig, network: Network) -> Game:
 # To decide on an action, we run N simulations, always starting at the root of
 # the search tree and traversing the tree according to the UCB formula until we
 # reach a leaf node.
-def run_mcts(config: MuZeroConfig, root: Node, action_history: ActionHistory, network: Network, min_max_stats: MinMaxStats):
+def run_mcts(config: MuZeroConfig, root: Node, action_history: ActionHistory, network: Network):
+    min_max_stats = MinMaxStats(config.known_bounds)
+
     for _ in range(config.num_simulations):
         history = action_history.clone()
         node = root
@@ -472,7 +474,7 @@ def ucb_score(config: MuZeroConfig, parent: Node, child: Node, min_max_stats: Mi
 
     prior_score = pb_c * child.prior
     if child.visit_count > 0:
-        value_score = min_max_stats.normalize(child.reward + config.discount * child.value())
+        value_score = child.reward + config.discount * min_max_stats.normalize(child.value())
     else:
         value_score = 0
     return prior_score + value_score
@@ -531,7 +533,7 @@ def train_network(config: MuZeroConfig, storage: SharedStorage, replay_buffer: R
     storage.save_network(config.training_steps, network)
 
 
-def scale_gradient(tensor: Any, scale):
+def scale_gradient(tensor, scale):
     """Scales the gradient for the backward pass."""
     return tensor * scale + tf.stop_gradient(tensor) * (1 - scale)
 
@@ -540,29 +542,27 @@ def update_weights(optimizer: tf.train.Optimizer, network: Network, batch, weigh
     loss = 0
     for image, actions, targets in batch:
         # Initial step, from the real observation.
-        network_output = network.initial_inference(image)
-        hidden_state = network_output.hidden_state
-        predictions = [(1.0, network_output)]
+        value, reward, policy_logits, hidden_state = network.initial_inference(image)
+        predictions = [(1.0, value, reward, policy_logits)]
 
         # Recurrent steps, from action and previous hidden state.
         for action in actions:
-            network_output = network.recurrent_inference(hidden_state, action)
-            hidden_state = network_output.hidden_state
-            predictions.append((1.0 / len(actions), network_output))
+            value, reward, policy_logits, hidden_state = network.recurrent_inference(hidden_state, action)
+            predictions.append((1.0 / len(actions), value, reward, policy_logits))
 
             hidden_state = scale_gradient(hidden_state, 0.5)
 
-        for k, (prediction, target) in enumerate(zip(predictions, targets)):
-            gradient_scale, network_output = prediction
+        for prediction, target in zip(predictions, targets):
+            gradient_scale, value, reward, policy_logits = prediction
             target_value, target_reward, target_policy = target
 
-            l = tf.nn.softmax_cross_entropy_with_logits(logits=network_output.policy_logits, labels=target_policy)
-            l += scalar_loss(network_output.value, target_value)
-            if k > 0:
-                l += scalar_loss(network_output.reward, target_reward)
+            l = (
+                scalar_loss(value, target_value)
+                + scalar_loss(reward, target_reward)
+                + tf.nn.softmax_cross_entropy_with_logits(logits=policy_logits, labels=target_policy)
+            )
 
             loss += scale_gradient(l, gradient_scale)
-    loss /= len(batch)
 
     for weights in network.get_weights():
         loss += weight_decay * tf.nn.l2_loss(weights)

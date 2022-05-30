@@ -1,23 +1,4 @@
 """Runs MuZero self-play training pipeline on Atari game.
-
-From the paper "Mastering Chess and Shogi by Self-Play with a General Reinforcement Learning Algorithm"
-https://arxiv.org/abs//1712.01815
-
-
-IMPORTANT NOTE:
-In order to run this, one needs to run large amount of actors (like 256 in MuZero paper) to generate self-play samples,
-as training one batch size 128 only takes 20-30 seconds.
-But self-play one game could take 3-5 minutes (in the early stage one game only have 50-80 samples).
-In the case we run training on single machine with 8-16 actors,
-the network could easily overfitting to existing samples while fail to converge to even suboptimal policy.
-
-One hack is to add some delay before start traning on next batch, to wait for the actors to generate some more training samples,
-this will slow down the overall training progress, but it should work in theory.
-The downside is we also have to 'tune' the delay hyper-parameters.
-
-
-nohup python3 -m muzero.atari.run_training --num_actors=6 --train_delay=0.25 --batch_size=32 --load_samples_file=samples/atari/replay_10000_20220518_133013 &
-
 """
 from absl import app
 from absl import flags
@@ -28,48 +9,55 @@ import threading
 import torch
 from torch.optim.lr_scheduler import MultiStepLR
 
-from muzero.network import MuZeroConvNet
+from muzero.network import MuZeroAtariNet
 from muzero.replay import PrioritizedReplay
 from muzero.gym_env import create_atari_environment
-from muzero.pipeline import run_self_play, run_training, run_evaluation, run_data_collector, load_checkpoint, load_from_file
+from muzero.pipeline import run_self_play, run_training, run_data_collector, load_checkpoint, load_from_file
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string("environment_name", 'Breakout', "Classic problem like Breakout, Pong")
-flags.DEFINE_integer('environment_height', 96, 'Environment frame screen height.')
-flags.DEFINE_integer('environment_width', 96, 'Environment frame screen width.')
-flags.DEFINE_integer("stack_history", 4, "Stack previous states.")
+flags.DEFINE_string("environment_name", 'BreakoutNoFrameskip-v4', "Classic problem like Breakout, Pong")
+flags.DEFINE_integer('screen_size', 84, 'Environment frame screen height.')
+flags.DEFINE_integer("stack_history", 8, "Stack previous states.")
+flags.DEFINE_integer("frame_skip", 4, "Skip n frames.")
 flags.DEFINE_bool("gray_scale", True, "Gray scale observation image.")
 
-flags.DEFINE_integer('num_res_blocks', 6, 'Number of res-blocks in the dynamics function.')
+flags.DEFINE_integer('num_res_blocks', 4, 'Number of res-blocks in the dynamics and prediction functions.')
 flags.DEFINE_integer('num_planes', 128, 'Number of planes for Conv2d layers in the model.')
-flags.DEFINE_integer('support_size', 101, 'Value and reward scalar projection support size.')
+flags.DEFINE_integer('value_support_size', 601, 'Value scalar projection support size, [-300, 300].')
+flags.DEFINE_integer('reward_support_size', 601, 'Reward scalar projection support size, [-300, 300].')
 
-flags.DEFINE_float('learning_rate', 0.05, 'Learning rate.')
-flags.DEFINE_float('l2_decay', 0.0001, 'Adam L2 regularization.')
+flags.DEFINE_float('learning_rate', 0.005, 'Learning rate.')
+flags.DEFINE_float('learning_rate_decay', 0.1, 'Adam learning rate decay rate.')
 flags.DEFINE_multi_integer('lr_boundaries', [350000], 'The number of steps at which the learning rate will decay.')
+flags.DEFINE_float('l2_decay', 0.0001, 'Adam L2 regularization.')
+
+flags.DEFINE_bool('clip_grad', False, 'Clip gradients, default on.')
+flags.DEFINE_float('max_grad_norm', 40.0, 'Max gradients norm when do gradients clip.')
 
 flags.DEFINE_float('discount', 0.997, 'Gamma discount.')
 flags.DEFINE_integer('n_step', 10, 'Value n-step bootstrap.')
-flags.DEFINE_integer('unroll_k', 5, 'Unroll dynamics and prediction functions for K steps during training.')
+flags.DEFINE_integer('unroll_step', 5, 'Unroll dynamics and prediction functions for K steps during training.')
 
-flags.DEFINE_integer(
-    'replay_capacity', 10000, 'Maximum replay size, note one sample contains unroll_k sequence length unroll.'
-)  # 50000
-flags.DEFINE_integer('min_replay_size', 5000, 'Minimum replay size before learning starts.')
-flags.DEFINE_integer('batch_size', 16, 'Sample batch size when do learning.')  # 32
+flags.DEFINE_integer('replay_capacity', 100000, 'Maximum replay size.')
+flags.DEFINE_integer('min_replay_size', 10000, 'Minimum replay size before learning starts.')
+flags.DEFINE_integer('batch_size', 8, 'Sample batch size when do learning.')
 
 flags.DEFINE_integer('num_train_steps', 1000000, 'Number of network updates per iteration.')
 
-flags.DEFINE_integer('num_actors', 8, 'Number of self-play actor processes.')
-flags.DEFINE_integer('num_simulations', 50, 'Number of simulations per MCTS search, per agent environment time step.')
+flags.DEFINE_integer('num_actors', 4, 'Number of self-play actor processes.')
+flags.DEFINE_integer('num_simulations', 30, 'Number of simulations per MCTS search, per agent environment time step.')
 flags.DEFINE_float(
     'root_noise_alpha', 0.25, 'Alph for dirichlet noise to MCTS root node prior probabilities to encourage exploration.'
 )
+flags.DEFINE_float('pb_c_base', 19652.0, 'PB C Base.')
+flags.DEFINE_float('pb_c_init', 1.25, 'PB C Init.')
+flags.DEFINE_float('min_bound', None, 'Minimum value bound.')
+flags.DEFINE_float('max_bound', None, 'Maximum value bound.')
 
 flags.DEFINE_float(
     'train_delay',
-    0.0,
-    'Delay (in seconds) before training on next batch samples, if training on GPU, using large value (like 0.75, 1.0, 1.5).',
+    0,
+    'Delay (in seconds) before training on next batch samples, for atari games no need to delay.',
 )
 flags.DEFINE_integer('seed', 1, 'Seed the runtime.')
 
@@ -83,36 +71,40 @@ flags.DEFINE_string(
 
 flags.DEFINE_integer(
     'samples_save_frequency',
-    10000,
-    'The frequency (measured in number added in replay) to save self-play samples in replay.',
+    -1,
+    'The frequency (measured in number added in replay) to save self-play samples in replay, default -1 do not save.',
 )
 flags.DEFINE_string('samples_save_dir', 'samples/atari', 'Path for save self-play samples in replay to file.')
 flags.DEFINE_string('load_samples_file', '', 'Load the replay samples from file.')
-flags.DEFINE_string('train_csv_file', 'logs/train_atari.csv', 'A csv file contains training statistics.')
-flags.DEFINE_string('eval_csv_file', 'logs/eval_atari.csv', 'A csv file contains training statistics.')
+flags.DEFINE_string('tag', '', 'Add tag to Tensorboard log file.')
+
+
+def mcts_temp_func(env_steps: int, train_steps: int) -> float:
+    """Atari game MCTS temperature scheduler."""
+    if train_steps < 200e3:
+        return 1.0
+    if train_steps < 500e3:
+        return 0.5
+    return 0.25
 
 
 def main(argv):
+    """Trains MuZero agent on Atari games."""
+    del argv
+
     device = 'cpu'
     if torch.cuda.is_available():
         device = 'cuda'
     runtime_device = torch.device(device)
 
-    evaluation_env = create_atari_environment(
-        FLAGS.environment_name,
-        FLAGS.seed + 1,
-        FLAGS.stack_history,
-        FLAGS.environment_height,
-        FLAGS.environment_width,
-        grayscale=FLAGS.gray_scale,
-    )
     self_play_envs = [
         create_atari_environment(
             FLAGS.environment_name,
             FLAGS.seed + i**2,
             FLAGS.stack_history,
-            FLAGS.environment_height,
-            FLAGS.environment_width,
+            FLAGS.frame_skip,
+            FLAGS.screen_size,
+            max_episode_steps=50000,
             grayscale=FLAGS.gray_scale,
         )
         for i in range(FLAGS.num_actors)
@@ -121,18 +113,22 @@ def main(argv):
     input_shape = self_play_envs[0].observation_space.shape
     num_actions = self_play_envs[0].action_space.n
 
-    network = MuZeroConvNet(input_shape, num_actions, FLAGS.num_res_blocks, FLAGS.num_planes, FLAGS.support_size)
+    tag = self_play_envs[0].spec.id
+    if FLAGS.tag is not None and FLAGS.tag != '':
+        tag = f'{tag}_{FLAGS.tag}'
+
+    network = MuZeroAtariNet(
+        input_shape, num_actions, FLAGS.num_res_blocks, FLAGS.num_planes, FLAGS.value_support_size, FLAGS.reward_support_size
+    )
     optimizer = torch.optim.Adam(network.parameters(), lr=FLAGS.learning_rate, weight_decay=FLAGS.l2_decay)
     lr_scheduler = MultiStepLR(optimizer, milestones=FLAGS.lr_boundaries, gamma=0.1)
 
-    actor_network = MuZeroConvNet(input_shape, num_actions, FLAGS.num_res_blocks, FLAGS.num_planes, FLAGS.support_size)
+    actor_network = MuZeroAtariNet(
+        input_shape, num_actions, FLAGS.num_res_blocks, FLAGS.num_planes, FLAGS.value_support_size, FLAGS.reward_support_size
+    )
     actor_network.share_memory()
 
-    new_checkpoint_network = MuZeroConvNet(
-        input_shape, num_actions, FLAGS.num_res_blocks, FLAGS.num_planes, FLAGS.support_size
-    )
-
-    replay = PrioritizedReplay(FLAGS.replay_capacity)
+    replay = PrioritizedReplay(FLAGS.replay_capacity, priority_exponent=1.0, importance_sampling_exponent=1.0)
 
     # Train loop use the stop_event to signaling other parties to stop running the pipeline.
     stop_event = multiprocessing.Event()
@@ -142,6 +138,7 @@ def main(argv):
     manager = multiprocessing.Manager()
     checkpoint_files = manager.list()
 
+    # Shared training steps counter, so actors can adjust temperature used in MCTS.
     train_steps_counter = multiprocessing.Value('i', 0)
 
     # Load states from checkpoint to resume training.
@@ -170,14 +167,7 @@ def main(argv):
     # Start to collect samples from self-play on a new thread.
     data_collector = threading.Thread(
         target=run_data_collector,
-        args=(
-            data_queue,
-            replay,
-            FLAGS.unroll_k,
-            FLAGS.samples_save_frequency,
-            FLAGS.samples_save_dir,
-            stop_event,
-        ),
+        args=(data_queue, replay, FLAGS.samples_save_frequency, FLAGS.samples_save_dir, stop_event, tag),
     )
     data_collector.start()
 
@@ -195,35 +185,19 @@ def main(argv):
             FLAGS.batch_size,
             FLAGS.num_train_steps,
             train_steps_counter,
+            FLAGS.clip_grad,
+            FLAGS.max_grad_norm,
             FLAGS.checkpoint_frequency,
             FLAGS.checkpoint_dir,
             checkpoint_files,
-            FLAGS.train_csv_file,
             stop_event,
             FLAGS.train_delay,
+            tag,
         ),
     )
     learner.start()
 
-    # Start evaluation loop on a seperate process.
-    evaluator = multiprocessing.Process(
-        target=run_evaluation,
-        args=(
-            new_checkpoint_network,
-            runtime_device,
-            evaluation_env,
-            0.35,
-            FLAGS.num_simulations,
-            checkpoint_files,
-            FLAGS.eval_csv_file,
-            stop_event,
-            FLAGS.discount,
-            50,
-        ),
-    )
-    evaluator.start()
-
-    # Start self-play processes.
+    # # Start self-play processes.
     actors = []
     for i in range(FLAGS.num_actors):
         actor = multiprocessing.Process(
@@ -231,17 +205,22 @@ def main(argv):
             args=(
                 i,
                 actor_network,
-                'cpu',
+                runtime_device,
                 self_play_envs[i],
                 data_queue,
                 train_steps_counter,
+                mcts_temp_func,
                 FLAGS.num_simulations,
                 FLAGS.n_step,
-                FLAGS.unroll_k,
+                FLAGS.unroll_step,
                 FLAGS.discount,
-                stop_event,
+                FLAGS.pb_c_base,
+                FLAGS.pb_c_init,
                 FLAGS.root_noise_alpha,
-                50,
+                FLAGS.min_bound,
+                FLAGS.max_bound,
+                stop_event,
+                tag,
             ),
         )
         actor.start()
@@ -251,7 +230,6 @@ def main(argv):
         actor.join()
         actor.close()
 
-    evaluator.join()
     learner.join()
     data_collector.join()
 
