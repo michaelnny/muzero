@@ -27,17 +27,17 @@ class BoardGameEnv(Env):
         self,
         board_size: int = 19,
         stack_history: int = 8,
-        black_player_id: int = 0,
-        white_player_id: int = 1,
+        black_player_id: int = 1,
+        white_player_id: int = 2,
         name: str = '',
-        enable_resign: bool = False,
+        enable_resign: bool = True,
     ) -> None:
         """
         Args:
             board_size: board size, default 19.
             stack_history: stack last N history states, default 8.
-            black_player_id: black player id, default 0.
-            white_player_id: white player id, default 1.
+            black_player_id: black player id, default 1.
+            white_player_id: white player id, default 2.
             name: name of the game, default ''.
         """
         super().__init__()

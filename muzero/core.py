@@ -1,27 +1,26 @@
 import collections
 from typing import Dict, List, Optional
 
-MAXIMUM_FLOAT_VALUE = float('inf')
 
 KnownBounds = collections.namedtuple('KnownBounds', ['min', 'max'])
 
 
-class MinMaxStats(object):
-    """A class that holds the min-max values of the tree."""
+# class MinMaxStats(object):
+#     """A class that holds the min-max values of the tree."""
 
-    def __init__(self, known_bounds: Optional[KnownBounds]):
-        self.maximum = known_bounds.max if known_bounds else -MAXIMUM_FLOAT_VALUE
-        self.minimum = known_bounds.min if known_bounds else MAXIMUM_FLOAT_VALUE
+#     def __init__(self, known_bounds: Optional[KnownBounds]):
+#         self.maximum = known_bounds.max if known_bounds else -MAXIMUM_FLOAT_VALUE
+#         self.minimum = known_bounds.min if known_bounds else MAXIMUM_FLOAT_VALUE
 
-    def update(self, value: float):
-        self.maximum = max(self.maximum, value)
-        self.minimum = min(self.minimum, value)
+#     def update(self, value: float):
+#         self.maximum = max(self.maximum, value)
+#         self.minimum = min(self.minimum, value)
 
-    def normalize(self, value: float) -> float:
-        if self.maximum > self.minimum:
-            # We normalize only when we have set the maximum and minimum values.
-            return (value - self.minimum) / (self.maximum - self.minimum)
-        return value
+#     def normalize(self, value: float) -> float:
+#         if self.maximum > self.minimum:
+#             # We normalize only when we have set the maximum and minimum values.
+#             return (value - self.minimum) / (self.maximum - self.minimum)
+#         return value
 
 
 class MuZeroConfig(object):
@@ -39,6 +38,7 @@ class MuZeroConfig(object):
         lr_decay_steps: float,
         visit_softmax_temperature_fn,
         known_bounds: Optional[KnownBounds] = None,
+        is_board_game: bool = False,
     ):
         ### Self-Play
         self.action_space_size = action_space_size
@@ -79,8 +79,10 @@ class MuZeroConfig(object):
         self.lr_decay_rate = 0.1
         self.lr_decay_steps = lr_decay_steps
 
+        self.is_board_game = is_board_game
 
-def make_board_game_config(action_space_size: int, max_moves: int, dirichlet_alpha: float, lr_init: float) -> MuZeroConfig:
+
+def make_gomoku_config(board_size: int) -> MuZeroConfig:
     def visit_softmax_temperature(num_moves, training_steps):
         if num_moves < 30:
             return 1.0
@@ -88,30 +90,44 @@ def make_board_game_config(action_space_size: int, max_moves: int, dirichlet_alp
             return 0.0  # Play according to the max.
 
     return MuZeroConfig(
-        action_space_size=action_space_size,
-        max_moves=max_moves,
+        action_space_size=board_size * 2 + 1,
+        max_moves=board_size * board_size * 2,
         discount=1.0,
-        dirichlet_alpha=dirichlet_alpha,
-        num_simulations=800,
-        batch_size=2048,
-        td_steps=max_moves,  # Always use Monte Carlo return.
+        dirichlet_alpha=0.03,
+        num_simulations=400,
+        batch_size=128,
+        td_steps=board_size * board_size * 2,  # Always use Monte Carlo return.
         num_actors=3000,
-        lr_init=lr_init,
+        lr_init=0.01,
         lr_decay_steps=400e3,
         visit_softmax_temperature_fn=visit_softmax_temperature,
         known_bounds=KnownBounds(-1, 1),
+        is_board_game=True,
     )
 
 
-def make_gomoku_config(board_size: int) -> MuZeroConfig:
+def make_tictactoe_config() -> MuZeroConfig:
+    def visit_softmax_temperature(num_moves, training_steps):
+        if num_moves < 30:
+            return 1.0
+        else:
+            return 0.0  # Play according to the max.
 
-    return make_board_game_config(
-        action_space_size=board_size * 2 + 1, max_moves=board_size * board_size * 2, dirichlet_alpha=0.03, lr_init=0.01
+    return MuZeroConfig(
+        action_space_size=10,
+        max_moves=9,
+        discount=1.0,
+        dirichlet_alpha=0.03,
+        num_simulations=30,
+        batch_size=128,
+        td_steps=9,  # Always use Monte Carlo return.
+        num_actors=3000,
+        lr_init=0.01,
+        lr_decay_steps=10e3,
+        visit_softmax_temperature_fn=visit_softmax_temperature,
+        known_bounds=KnownBounds(-1, 1),
+        is_board_game=True,
     )
-
-
-def make_go_config() -> MuZeroConfig:
-    return make_board_game_config(action_space_size=362, max_moves=722, dirichlet_alpha=0.03, lr_init=0.01)
 
 
 def make_atari_config() -> MuZeroConfig:
@@ -135,4 +151,5 @@ def make_atari_config() -> MuZeroConfig:
         lr_init=0.05,
         lr_decay_steps=350e3,
         visit_softmax_temperature_fn=visit_softmax_temperature,
+        is_board_game=False,
     )

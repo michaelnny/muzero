@@ -14,6 +14,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
+from muzero.core import MuZeroConfig
 from muzero.games.env import BoardGameEnv
 from muzero.network import MuZeroNet
 from muzero.replay import Transition, PrioritizedReplay
@@ -127,7 +128,7 @@ def run_self_play(
                 del (observations, actions, rewards, pi_probs, root_values, priorities, player_ids, target_values)
 
         game += 1
-        if game % 100 == 0:
+        if game % 1000 == 0:
             logging.info(f'Self-play actor {rank} played {game} games')
 
         # Unpack list of tuples into seperate lists.
@@ -478,14 +479,23 @@ def calc_loss(
     # [B, T, num_actions]
     target_pi_prob = torch.from_numpy(transitions.pi_prob).to(device=device, dtype=torch.float32, non_blocking=True)
 
-    if not is_board_game:
-        # Convert scalar targets into transformed support (probabilities).
+    # if not is_board_game:
+
+    is_value_mse_loss = network.value_support_size == 1
+    is_reward_mse_loss = network.reward_support_size == 1
+
+    # Convert scalar targets into transformed support (probabilities).
+    if is_value_mse_loss:
+        target_value = target_value_scalar
+    else:
         # [B, T, num_actions]
         target_value = scalar_to_categorical_probabilities(target_value_scalar, network.value_support_size)
-        target_reward = scalar_to_categorical_probabilities(target_reward_scalar, network.reward_support_size)
-    else:
-        target_value = target_value_scalar
+
+    if is_reward_mse_loss:
         target_reward = target_reward_scalar
+    else:
+        # [B, T, num_actions]
+        target_reward = scalar_to_categorical_probabilities(target_reward_scalar, network.reward_support_size)
 
     B, T = action.shape
     reward_loss, value_loss, policy_loss = (0, 0, 0)
@@ -501,7 +511,8 @@ def calc_loss(
         pred_pi_logits, pred_value = network.prediction(hidden_state)
         hidden_state, pred_reward = network.dynamics(hidden_state, action[:, t].unsqueeze(1))
 
-        if t == 0 and not is_board_game:
+        # if t == 0 and not is_board_game:
+        if t == 0:
             with torch.no_grad():
                 # Using the delta between predicted value and target value (for the initial hidden state) as priorities.
                 pred_value_scalar = logits_to_transformed_expected_value(pred_value, network.value_supports).squeeze(1)
@@ -510,17 +521,17 @@ def calc_loss(
         # Scale the gradient for dynamics function by 0.5.
         hidden_state.register_hook(lambda grad: grad * 0.5)
 
-        value_loss += loss_func(pred_value.squeeze(), target_value[:, t], is_board_game)
-        if not is_board_game:
-            reward_loss += loss_func(pred_reward.squeeze(), target_reward[:, t], is_board_game)
+        value_loss += loss_func(pred_value.squeeze(), target_value[:, t], is_value_mse_loss)
+        # if not is_board_game:
+        reward_loss += loss_func(pred_reward.squeeze(), target_reward[:, t], is_reward_mse_loss)
         # policy_loss += loss_func(network_output.pi_logits, target_pi_prob[:, t])
         policy_loss += F.cross_entropy(pred_pi_logits, target_pi_prob[:, t], reduction='none')
 
     # Board game uses uniform replay, we skip the sample weights.
-    if not is_board_game:
-        reward_loss = reward_loss * weights.detach()
-        value_loss = value_loss * weights.detach()
-        policy_loss = policy_loss * weights.detach()
+    # if not is_board_game:
+    reward_loss = reward_loss * weights.detach()
+    value_loss = value_loss * weights.detach()
+    policy_loss = policy_loss * weights.detach()
 
     loss = torch.mean(reward_loss + value_loss + policy_loss)
 

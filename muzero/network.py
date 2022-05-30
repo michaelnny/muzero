@@ -1,6 +1,7 @@
 """Neural Network component."""
 from typing import NamedTuple, Optional, Tuple
 import math
+import numpy as np
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -12,7 +13,7 @@ class NetworkOutputs(NamedTuple):
 
     hidden_state: torch.Tensor
     reward: torch.Tensor
-    pi_logits: torch.Tensor
+    pi_probs: torch.Tensor
     value: torch.Tensor
 
 
@@ -48,11 +49,19 @@ class MuZeroNet(nn.Module):
 
         # Prediction function
         pi_logits, value = self.prediction(hidden_state)
+        pi_probs = F.softmax(pi_logits, dim=1)
 
         if self.value_support_size > 1:
             value = logits_to_transformed_expected_value(value, self.value_supports.detach())
         reward = torch.zeros_like(value)
-        return NetworkOutputs(hidden_state=hidden_state, reward=reward, pi_logits=pi_logits, value=value)
+
+        # Remove batch dimensions and turn into numpy or scalar values.
+        pi_probs = pi_probs.squeeze(0).cpu().numpy()
+        value = value.squeeze(0).cpu().item()
+        reward = reward.squeeze(0).cpu().item()
+        hidden_state = hidden_state.squeeze(0).cpu().numpy()
+
+        return NetworkOutputs(hidden_state=hidden_state, reward=reward, pi_probs=pi_probs, value=value)
 
     @torch.no_grad()
     def recurrent_inference(self, hidden_state: torch.Tensor, action: torch.Tensor) -> NetworkOutputs:
@@ -68,11 +77,18 @@ class MuZeroNet(nn.Module):
 
         # Prediction function
         pi_logits, value = self.prediction(hidden_state)
+        pi_probs = F.softmax(pi_logits, dim=1)
 
         if self.value_support_size > 1:
             value = logits_to_transformed_expected_value(value, self.value_supports.detach())
 
-        return NetworkOutputs(hidden_state=hidden_state, reward=reward, pi_logits=pi_logits, value=value)
+        # Remove batch dimensions and turn into numpy or scalar values.
+        pi_probs = pi_probs.squeeze(0).cpu().numpy()
+        value = value.squeeze(0).cpu().item()
+        reward = reward.squeeze(0).cpu().item()
+        hidden_state = hidden_state.squeeze(0).cpu().numpy()
+
+        return NetworkOutputs(hidden_state=hidden_state, reward=reward, pi_probs=pi_probs, value=value)
 
     def represent(self, x: torch.Tensor) -> torch.Tensor:
         """Given environment observation, using representation function to predict initial hidden state."""
@@ -86,6 +102,19 @@ class MuZeroNet(nn.Module):
         """Given hidden state, using prediction function to predict policy probabilities and state value.
         The state value is raw logits (no scaling or transformation)."""
         raise NotImplementedError
+
+
+def extract_network_output(network_out: NetworkOutputs) -> Tuple[float, float, np.ndarray, np.ndarray]:
+    """Extract network inference output."""
+    pi_probs = F.softmax(network_out.pi_logits, dim=1)
+
+    # Remove batch dimensions and turn into numpy or scalar values.
+    pi_probs = pi_probs.squeeze(0).cpu().numpy()
+    value = network_out.value.squeeze(0).cpu().item()
+    reward = network_out.reward.squeeze(0).cpu().item()
+    hidden_state = network_out.hidden_state.squeeze(0).cpu().numpy()
+
+    return value, reward, hidden_state, pi_probs
 
 
 ###############################################################################

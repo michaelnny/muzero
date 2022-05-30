@@ -60,14 +60,12 @@ class Node:
 
     def expand(self, prior: np.ndarray, player_id: int, hidden_state: np.ndarray, reward: float) -> None:
         """Expand all actions, including illegal actions.
-
         Args:
             prior: 1D numpy.array contains prior probabilities of the state for all actions,
                 whoever calls this should pre-processing illegal actions first.
             player_id: the current player id in the environment timestep.
             hidden_state: the corresponding hidden state for current timestep.
             reward: the reward for current timestep.
-
         Raises:
             ValueError:
                 if node instance already expanded.
@@ -95,14 +93,11 @@ class Node:
         is_board_game: bool = False,
     ) -> Node:
         """Returns best child node with maximum action value Q plus an upper confidence bound U.
-
         Args:
             actions_mask: a 1D bool numpy.array contains legal actions for current state.
             c_puct: a float constatnt determining the level of exploration, default 5.0.
-
         Returns:
             The best child node.
-
         Raises:
             ValueError:
                 if the node instance itself is a leaf node.
@@ -112,10 +107,6 @@ class Node:
         if not self.is_expanded:
             raise ValueError('Expand leaf node first.')
 
-        # if is_board_game:
-        #     ucb_results = -1.0 * self.child_Q_old() + 5.0 * self.child_U_old()
-        #     # ucb_results = -1.0 * self.child_Q(min_max_stats, is_board_game) + self.child_U(pb_c_base, pb_c_init)
-        # else:
         ucb_results = self.child_Q(min_max_stats, is_board_game) + self.child_U(pb_c_base, pb_c_init)
 
         # Break ties when have multiple 'max' value.
@@ -133,17 +124,17 @@ class Node:
             current.N += 1
 
             if is_board_game:
-                # q = current.reward - current.discount * current.Q
-                pass
+                q = current.reward - current.discount * current.Q
             else:
-                min_max_stats.update(current.reward + current.discount * current.Q)
-                value = current.reward + current.discount * value
+                q = current.reward + current.discount * current.Q
+            min_max_stats.update(q)
 
-            # if is_board_game and current.player_id == player_id:
-            #     reward = -current.reward
-            # else:
-            #     reward = current.reward
+            if is_board_game and current.player_id == player_id:
+                reward = -current.reward
+            else:
+                reward = current.reward
 
+            value = reward + current.discount * value
             current = current.parent
 
     def child_Q(self, min_max_stats: MinMaxStats, is_board_game: bool) -> np.ndarray:
@@ -151,15 +142,12 @@ class Node:
         p = 1.0
         if is_board_game:
             p = -1.0
-            return -1.0 * np.array([child.Q for child in self.children], dtype=np.float32)
         return np.array(
-            [min_max_stats.normalize(child.reward + child.discount * child.Q) for child in self.children], dtype=np.float32
+            [min_max_stats.normalize(child.reward + child.discount * p * child.Q) for child in self.children], dtype=np.float32
         )
 
     def child_U(self, pb_c_base: float, pb_c_init: float) -> np.ndarray:
         """Returns a 1D numpy.array contains UCB score for all child."""
-        # return np.array([child.prior * (math.sqrt(self.N) / (1 + child.N)) for child in self.children], dtype=np.float32)
-
         return np.array(
             [
                 child.prior
@@ -168,14 +156,6 @@ class Node:
             ],
             dtype=np.float32,
         )
-
-    # def child_Q_old(self) -> np.ndarray:
-    #     """Returns a 1D numpy.array contains UCB score for all child."""
-    #     return np.array([child.Q for child in self.children], dtype=np.float32)
-
-    # def child_U_old(self) -> np.ndarray:
-    #     """Returns a 1D numpy.array contains UCB score for all child."""
-    #     return np.array([child.prior * (math.sqrt(self.N) / (1 + child.N)) for child in self.children], dtype=np.float32)
 
     @property
     def Q(self) -> float:
@@ -192,15 +172,12 @@ class Node:
 
 def add_dirichlet_noise(prob: np.ndarray, eps: float = 0.25, alpha: float = 0.03):
     """Add dirichlet noise to a given probabilities.
-
     Args:
         prob: a numpy.array contains action probabilities we want to add noise to.
         eps: epsilon constant to weight the priors vs. dirichlet noise.
         alpha: parameter of the dirichlet noise distribution.
-
     Returns:
         action probabilities with added dirichlet noise.
-
     Raises:
         ValueError:
             if input argument `prob` is not a valid float numpy.array.
@@ -224,14 +201,11 @@ def add_dirichlet_noise(prob: np.ndarray, eps: float = 0.25, alpha: float = 0.03
 def generate_play_policy(visits_count: np.ndarray, temperature: float) -> np.ndarray:
     """Returns a policy action probabilities after MCTS search,
     proportional to its exponentialted visit count.
-
     Args:
         visits_count: a 1D numpy.array contains child node visits count.
         temperature: a parameter controls the level of exploration.
-
     Returns:
         a 1D numpy.array contains the action probabilities after MCTS search.
-
     Raises:
         ValueError:
             if input argument `child_n` is not a valid 1D numpy.array.
@@ -286,7 +260,6 @@ def uct_search(
     best_action: bool = False,
 ) -> Tuple[int, np.ndarray, float]:
     """Single-threaded Upper Confidence Bound (UCB) for Trees (UCT) search without any rollout.
-
     It follows the following general UCT search algorithm.
     ```
     function UCTSEARCH(r,m)
@@ -314,7 +287,7 @@ def uct_search(
     # Create root node
     state = torch.from_numpy(state).to(device=device, dtype=torch.float32)
     network_out = network.initial_inference(state[None, ...])
-    root_value, reward, hidden_state, prior_prob = extract_network_output(network_out, is_board_game)
+    root_value, prior_prob = network_out.value, network_out.pi_probs
 
     root_node = Node(player_id=init_current_player, discount=discount)
 
@@ -325,8 +298,8 @@ def uct_search(
     if actions_mask is not None:
         prior_prob = set_illegal_action_probs_to_zero(actions_mask, prior_prob)
 
-    root_node.expand(prior_prob, init_opponent_player, hidden_state, reward)
-    root_node.backup(root_value, init_current_player, min_max_stats, is_board_game)
+    root_node.expand(prior_prob, init_opponent_player, network_out.hidden_state, network_out.reward)
+    # root_node.backup(root_value, init_current_player, min_max_stats, is_board_game)
     assert root_node.player_id == current_player
 
     for _ in range(num_simulations):
@@ -346,12 +319,11 @@ def uct_search(
         action = torch.tensor(node.move, dtype=torch.long, device=device).unsqueeze(0)
 
         network_out = network.recurrent_inference(hidden_state[None, ...], action[None, ...])
-        value, reward, hidden_state, prior_prob = extract_network_output(network_out, is_board_game)
 
-        node.expand(prior_prob, oppo_player, hidden_state, reward)
+        node.expand(prior_prob, oppo_player, network_out.hidden_state, network_out.reward)
 
         # Phase 3 - Backup on leaf node
-        node.backup(value, curr_player, min_max_stats, is_board_game)
+        node.backup(network_out.value, curr_player, min_max_stats, is_board_game)
 
     # Play - generate action probability from the root node.
     child_visits = root_node.child_N
@@ -369,18 +341,3 @@ def uct_search(
         action = np.random.choice(np.arange(pi_prob.shape[0]), p=pi_prob)
 
     return (action, pi_prob, root_node.Q, abs(root_node.Q - root_value))
-
-
-def extract_network_output(network_out: NetworkOutputs, is_board_game: bool) -> Tuple[float, float, np.ndarray, np.ndarray]:
-    """Extract network inference output."""
-    pi_probs = F.softmax(network_out.pi_logits, dim=1)
-
-    # Remove batch dimensions and turn into numpy or scalar values.
-    pi_probs = pi_probs.squeeze(0).cpu().numpy()
-    value = network_out.value.squeeze(0).cpu().item()
-    # Board game has no immediate reward.
-    reward = 0.0 if is_board_game else network_out.reward.squeeze(0).cpu().item()
-    # reward = network_out.reward.squeeze(0).cpu().item()
-    hidden_state = network_out.hidden_state.squeeze(0).cpu().numpy()
-
-    return value, reward, hidden_state, pi_probs

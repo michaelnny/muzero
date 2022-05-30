@@ -11,17 +11,17 @@ import torch
 from torch.optim.lr_scheduler import MultiStepLR
 
 from muzero.games.tictactoe import TicTacToeEnv
-from muzero.network import MuZeroBoardGameNet
+from muzero.network import MuZeroMLPNet, MuZeroBoardGameNet
 from muzero.replay import PrioritizedReplay
 from muzero.pipeline import run_self_play, run_evaluation, run_training, run_data_collector, load_checkpoint, load_from_file
 
 FLAGS = flags.FLAGS
-flags.DEFINE_integer('num_res_blocks', 1, 'Number of res-blocks in the representation, dynamics, and prediction functions.')
-flags.DEFINE_integer('num_planes', 16, 'Number of planes for Conv2d layers and (hidden units) FC layers in the model.')
+flags.DEFINE_integer('num_res_blocks', 2, 'Number of res-blocks in the representation, dynamics, and prediction functions.')
+flags.DEFINE_integer('num_planes', 512, 'Number of planes for Conv2d layers and (hidden units) FC layers in the model.')
 
-flags.DEFINE_float('learning_rate', 0.002, 'Learning rate.')
+flags.DEFINE_float('learning_rate', 0.0005, 'Learning rate.')
 flags.DEFINE_float('learning_rate_decay', 0.1, 'Adam learning rate decay rate.')
-flags.DEFINE_multi_integer('lr_boundaries', [40000], 'The number of steps at which the learning rate will decay.')
+flags.DEFINE_multi_integer('lr_boundaries', [100000], 'The number of steps at which the learning rate will decay.')
 flags.DEFINE_float('l2_decay', 0.0001, 'Adam L2 regularization.')
 
 flags.DEFINE_bool('clip_grad', False, 'Clip gradients, default on.')
@@ -31,19 +31,19 @@ flags.DEFINE_float('discount', 1.0, 'Gamma discount.')
 flags.DEFINE_integer('n_step', 10, 'Value n-step bootstrap.')
 flags.DEFINE_integer('unroll_step', 5, 'Unroll dynamics and prediction functions for K steps during training.')
 
-flags.DEFINE_integer('replay_capacity', 2000 * 9, 'Maximum replay size.')
-flags.DEFINE_integer('min_replay_size', 1000, 'Minimum replay size before learning starts.')
+flags.DEFINE_integer('replay_capacity', 50000, 'Maximum replay size.')
+flags.DEFINE_integer('min_replay_size', 20000, 'Minimum replay size before learning starts.')
 flags.DEFINE_integer('batch_size', 128, 'Sample batch size when do learning.')
 
-flags.DEFINE_integer('num_train_steps', 100000, 'Number of training steps (measured in network updates).')
+flags.DEFINE_integer('num_train_steps', 50000, 'Number of training steps (measured in network updates).')
 
-flags.DEFINE_integer('num_actors', 2, 'Number of self-play actor processes.')
-flags.DEFINE_integer('num_simulations', 25, 'Number of simulations per MCTS search, per agent environment time step.')
+flags.DEFINE_integer('num_actors', 7, 'Number of self-play actor processes.')
+flags.DEFINE_integer('num_simulations', 30, 'Number of simulations per MCTS search, per agent environment time step.')
 flags.DEFINE_float(
-    'root_noise_alpha', 0.05, 'Alph for dirichlet noise to MCTS root node prior probabilities to encourage exploration.'
+    'root_noise_alpha', 0.25, 'Alph for dirichlet noise to MCTS root node prior probabilities to encourage exploration.'
 )
 flags.DEFINE_float('pb_c_base', 19652.0, 'PB C Base.')
-flags.DEFINE_float('pb_c_init', 2.5, 'PB C Init.')
+flags.DEFINE_float('pb_c_init', 1.25, 'PB C Init.')
 
 flags.DEFINE_float('min_bound', -1.0, 'Minimum value bound.')
 flags.DEFINE_float('max_bound', 1.0, 'Maximum value bound.')
@@ -79,7 +79,7 @@ flags.DEFINE_string('tag', '', 'Add tag to Tensorboard log file.')
 
 def mcts_temp_func(env_steps: int, train_steps: int) -> float:
     """Board game MCTS temperature scheduler."""
-    if env_steps < 4:
+    if env_steps < 6:
         return 1.0
     return 0.1
 
@@ -103,18 +103,19 @@ def main(argv):
     if FLAGS.tag is not None and FLAGS.tag != '':
         tag = f'{tag}_{FLAGS.tag}'
 
-    network = MuZeroBoardGameNet(input_shape, num_actions, FLAGS.num_res_blocks, FLAGS.num_planes)
-    optimizer = torch.optim.Adam(network.parameters(), lr=FLAGS.learning_rate, weight_decay=FLAGS.l2_decay)
+    # network = MuZeroBoardGameNet(input_shape, num_actions, FLAGS.num_res_blocks, FLAGS.num_planes)
+    network = MuZeroMLPNet(input_shape, num_actions, FLAGS.num_planes, 31, 31, 64)
+    optimizer = torch.optim.Adam(network.parameters(), lr=FLAGS.learning_rate, weight_decay=FLAGS.l2_decay, eps=0.00015)
     lr_scheduler = MultiStepLR(optimizer, milestones=FLAGS.lr_boundaries, gamma=0.1)
 
-    actor_network = MuZeroBoardGameNet(input_shape, num_actions, FLAGS.num_res_blocks, FLAGS.num_planes)
+    actor_network = MuZeroMLPNet(input_shape, num_actions, FLAGS.num_planes, 31, 31, 64)
     actor_network.share_memory()
 
-    old_checkpoint_network = MuZeroBoardGameNet(input_shape, num_actions, FLAGS.num_res_blocks, FLAGS.num_planes)
-    new_checkpoint_network = MuZeroBoardGameNet(input_shape, num_actions, FLAGS.num_res_blocks, FLAGS.num_planes)
+    old_checkpoint_network = MuZeroMLPNet(input_shape, num_actions, FLAGS.num_planes, 31, 31, 64)
+    new_checkpoint_network = MuZeroMLPNet(input_shape, num_actions, FLAGS.num_planes, 31, 31, 64)
 
     # By set priority_exponent=0, this becomes uniform replay
-    replay = PrioritizedReplay(FLAGS.replay_capacity, priority_exponent=0.0, importance_sampling_exponent=0.0)
+    replay = PrioritizedReplay(FLAGS.replay_capacity, priority_exponent=1.0, importance_sampling_exponent=1.0)
 
     # Train loop use the stop_event to signaling other parties to stop running the pipeline.
     stop_event = multiprocessing.Event()
@@ -185,29 +186,29 @@ def main(argv):
     )
     learner.start()
 
-    # Start evaluation loop on a seperate process.
-    evaluator = multiprocessing.Process(
-        target=run_evaluation,
-        args=(
-            old_checkpoint_network,
-            new_checkpoint_network,
-            runtime_device,
-            evaluation_env,
-            FLAGS.discount,
-            FLAGS.pb_c_base,
-            FLAGS.pb_c_init,
-            0.0,
-            0.1,
-            FLAGS.num_simulations,
-            FLAGS.min_bound,
-            FLAGS.max_bound,
-            checkpoint_files,
-            stop_event,
-            FLAGS.initial_elo,
-            tag,
-        ),
-    )
-    evaluator.start()
+    # # Start evaluation loop on a seperate process.
+    # evaluator = multiprocessing.Process(
+    #     target=run_evaluation,
+    #     args=(
+    #         old_checkpoint_network,
+    #         new_checkpoint_network,
+    #         runtime_device,
+    #         evaluation_env,
+    #         FLAGS.discount,
+    #         FLAGS.pb_c_base,
+    #         FLAGS.pb_c_init,
+    #         0.0,
+    #         0.1,
+    #         FLAGS.num_simulations,
+    #         FLAGS.min_bound,
+    #         FLAGS.max_bound,
+    #         checkpoint_files,
+    #         stop_event,
+    #         FLAGS.initial_elo,
+    #         tag,
+    #     ),
+    # )
+    # evaluator.start()
 
     # # Start self-play processes.
     actors = []
@@ -233,7 +234,7 @@ def main(argv):
                 FLAGS.max_bound,
                 stop_event,
                 tag,
-                False,
+                True,
                 True,
             ),
         )
@@ -246,7 +247,7 @@ def main(argv):
 
     learner.join()
     data_collector.join()
-    evaluator.join()
+    # evaluator.join()
 
 
 if __name__ == '__main__':
