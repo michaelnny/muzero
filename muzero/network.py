@@ -1,7 +1,6 @@
 """Neural Network component."""
-from typing import NamedTuple, Optional, Tuple
+from typing import NamedTuple, Tuple
 import math
-import numpy as np
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -103,18 +102,15 @@ class MuZeroNet(nn.Module):
         The state value is raw logits (no scaling or transformation)."""
         raise NotImplementedError
 
+    @property
+    def mse_loss_for_value(self):
+        """Should use MSE loss for state value."""
+        return self.value_support_size == 1
 
-def extract_network_output(network_out: NetworkOutputs) -> Tuple[float, float, np.ndarray, np.ndarray]:
-    """Extract network inference output."""
-    pi_probs = F.softmax(network_out.pi_logits, dim=1)
-
-    # Remove batch dimensions and turn into numpy or scalar values.
-    pi_probs = pi_probs.squeeze(0).cpu().numpy()
-    value = network_out.value.squeeze(0).cpu().item()
-    reward = network_out.reward.squeeze(0).cpu().item()
-    hidden_state = network_out.hidden_state.squeeze(0).cpu().numpy()
-
-    return value, reward, hidden_state, pi_probs
+    @property
+    def mse_loss_for_reward(self):
+        """Should use MSE loss for reward."""
+        return self.reward_support_size == 1
 
 
 ###############################################################################
@@ -308,7 +304,7 @@ class RepresentationConvAtariNet(nn.Module):
         c, h, w = input_shape
 
         # Original paper uses 3 res-blocks
-        num_res_blocks = 2
+        num_res_blocks = 1
 
         # output 48x48
         self.conv_1 = nn.Conv2d(in_channels=c, out_channels=128, kernel_size=3, stride=2, padding=1, bias=False)
@@ -501,7 +497,7 @@ class MuZeroAtariNet(MuZeroNet):  # pylint: disable=abstract-method
         self,
         input_shape: tuple,
         num_actions: int,
-        num_res_blocks: int = 8,
+        num_res_blocks: int = 16,
         num_planes: int = 256,
         value_support_size: int = 601,
         reward_support_size: int = 601,
@@ -534,7 +530,7 @@ class MuZeroBoardGameNet(MuZeroNet):  # pylint: disable=abstract-method
         self,
         input_shape: tuple,
         num_actions: int,
-        num_res_blocks: int = 8,
+        num_res_blocks: int = 16,
         num_planes: int = 256,
     ) -> None:
         super().__init__(num_actions, 1, 1)

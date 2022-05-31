@@ -11,11 +11,11 @@ from muzero.pipeline import load_checkpoint
 from muzero.mcts import uct_search
 
 FLAGS = flags.FLAGS
-flags.DEFINE_integer('board_size', 7, 'Board size for Gomoku.')
-flags.DEFINE_integer('num_to_win', 4, 'Number in a row to win.')
+flags.DEFINE_integer('board_size', 9, 'Board size for Gomoku.')
+flags.DEFINE_integer('num_to_win', 5, 'Number in a row to win.')
 flags.DEFINE_integer('stack_history', 4, 'Stack previous states.')
 
-flags.DEFINE_integer('num_res_blocks', 3, 'Number of res-blocks in the representation and dynamics functions.')
+flags.DEFINE_integer('num_res_blocks', 4, 'Number of res-blocks in the representation and dynamics functions.')
 flags.DEFINE_integer('num_planes', 64, 'Number of planes for Conv2d layers in the model.')
 
 flags.DEFINE_float('discount', 1.0, 'Gamma discount.')
