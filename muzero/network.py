@@ -30,14 +30,6 @@ class MuZeroNet(nn.Module):
         self.value_support_size = value_support_size
         self.reward_support_size = reward_support_size
 
-        max_value_support = (value_support_size - 1) // 2
-        min_value_support = -max_value_support
-        self.value_supports = torch.arange(min_value_support, max_value_support + 1, dtype=torch.float32)
-
-        max_reward_support = (reward_support_size - 1) // 2
-        min_reward_support = -max_reward_support
-        self.reward_supports = torch.arange(min_reward_support, max_reward_support + 1, dtype=torch.float32)
-
     @torch.no_grad()
     def initial_inference(self, x: torch.Tensor) -> NetworkOutputs:
         """During self-play, given environment observation, use representation function to predict initial hidden state.
@@ -50,8 +42,8 @@ class MuZeroNet(nn.Module):
         pi_logits, value = self.prediction(hidden_state)
         pi_probs = F.softmax(pi_logits, dim=1)
 
-        if self.value_support_size > 1:
-            value = logits_to_transformed_expected_value(value, self.value_supports.detach())
+        if not self.mse_loss_for_value:
+            value = logits_to_transformed_expected_value(value, self.value_support_size)
         reward = torch.zeros_like(value)
 
         # Remove batch dimensions and turn into numpy or scalar values.
@@ -71,15 +63,15 @@ class MuZeroNet(nn.Module):
         # Dynamics function
         hidden_state, reward = self.dynamics(hidden_state, action)
 
-        if self.reward_support_size > 1:
-            reward = logits_to_transformed_expected_value(reward, self.reward_supports.detach())
+        if not self.mse_loss_for_reward:
+            reward = logits_to_transformed_expected_value(reward, self.reward_support_size)
 
         # Prediction function
         pi_logits, value = self.prediction(hidden_state)
         pi_probs = F.softmax(pi_logits, dim=1)
 
-        if self.value_support_size > 1:
-            value = logits_to_transformed_expected_value(value, self.value_supports.detach())
+        if not self.mse_loss_for_value:
+            value = logits_to_transformed_expected_value(value, self.value_support_size)
 
         # Remove batch dimensions and turn into numpy or scalar values.
         pi_probs = pi_probs.squeeze(0).cpu().numpy()
@@ -132,7 +124,6 @@ class RepresentationMLPNet(nn.Module):
         batch_size = x.shape[0]
         x = x.view(batch_size, -1)
         hidden_state = self.net(x)
-        hidden_state = normalize_hidden_state(hidden_state)
         return hidden_state
 
 
@@ -156,7 +147,7 @@ class DynamicsMLPNet(nn.Module):
         )
 
         self.reward_net = nn.Sequential(
-            nn.Linear(hidden_size, num_planes),
+            nn.Linear(hidden_size + num_actions, num_planes),
             nn.ReLU(),
             nn.Linear(num_planes, support_size),
         )
@@ -173,9 +164,8 @@ class DynamicsMLPNet(nn.Module):
         x = torch.cat([hidden_state, onehot_action], dim=1)
 
         hidden_state = self.transition_net(x)
-        hidden_state = normalize_hidden_state(hidden_state)
+        reward_logits = self.reward_net(x)
 
-        reward_logits = self.reward_net(hidden_state)
         return hidden_state, reward_logits
 
 
@@ -235,11 +225,19 @@ class MuZeroMLPNet(MuZeroNet):  # pylint: disable=abstract-method
 
         self.prediction_net = PredictionMLPNet(num_actions, num_planes, hidden_size, value_support_size)
 
+        # self.LN = nn.LayerNorm([hidden_size], elementwise_affine=True)
+
     def represent(self, x: torch.Tensor) -> torch.Tensor:
-        return self.represent_net(x)
+        hidden_state = self.represent_net(x)
+        # hidden_state = F.relu(self.LN(hidden_state))
+        hidden_state = normalize_hidden_state(hidden_state)
+        return hidden_state
 
     def dynamics(self, hidden_state: torch.Tensor, action: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        return self.dynamics_net(hidden_state, action)
+        hidden_state, reward_logits = self.dynamics_net(hidden_state, action)
+        # hidden_state = F.relu(self.LN(hidden_state))
+        hidden_state = normalize_hidden_state(hidden_state)
+        return hidden_state, reward_logits
 
     def prediction(self, hidden_state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.prediction_net(hidden_state)
@@ -333,7 +331,6 @@ class RepresentationConvAtariNet(nn.Module):
         x = self.avg_pool_1(x)
         x = self.res_blocks_3(x)
         hidden_state = self.avg_pool_2(x)
-
         hidden_state = normalize_hidden_state(hidden_state)
         return hidden_state
 
@@ -433,9 +430,8 @@ class DynamicsConvNet(nn.Module):
 
         x = torch.cat([hidden_state, onehot_action], dim=1)
         hidden_state = self.res_blocks(self.conv_block(x))
-        hidden_state = normalize_hidden_state(hidden_state)
-
         reward_logits = self.reward_head(hidden_state)
+        hidden_state = normalize_hidden_state(hidden_state)
         return hidden_state, reward_logits
 
 

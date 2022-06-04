@@ -18,7 +18,7 @@ from muzero.pipeline import run_self_play, run_training, run_data_collector, loa
 FLAGS = flags.FLAGS
 flags.DEFINE_string("environment_name", 'BreakoutNoFrameskip-v4', "Classic problem like Breakout, Pong")
 flags.DEFINE_integer('screen_size', 84, 'Environment frame screen height.')
-flags.DEFINE_integer("stack_history", 8, "Stack previous states.")
+flags.DEFINE_integer("stack_history", 4, "Stack previous states.")
 flags.DEFINE_integer("frame_skip", 4, "Skip n frames.")
 flags.DEFINE_bool("gray_scale", True, "Gray scale observation image.")
 
@@ -81,10 +81,8 @@ def main(argv):
         config.value_support_size,
         config.reward_support_size,
     )
-    optimizer = torch.optim.Adam(
-        network.parameters(), lr=config.lr_init, weight_decay=config.weight_decay, eps=config.adam_eps
-    )
-    lr_scheduler = MultiStepLR(optimizer, milestones=config.lr_boundaries, gamma=config.lr_decay_rate)
+    optimizer = torch.optim.Adam(network.parameters(), lr=config.lr_init, weight_decay=config.weight_decay)
+    lr_scheduler = MultiStepLR(optimizer, milestones=config.lr_milestones, gamma=config.lr_decay_rate)
 
     actor_network = MuZeroAtariNet(
         input_shape,
@@ -96,13 +94,9 @@ def main(argv):
     )
     actor_network.share_memory()
 
-    replay = PrioritizedReplay(
-        config.replay_capacity,
-        priority_exponent=config.priority_exponent,
-        importance_sampling_exponent=config.importance_sampling_exponent,
-    )
+    replay = PrioritizedReplay(config.replay_capacity, config.priority_exponent, config.importance_sampling_exponent)
 
-    # Train loop use the stop_event to signaling other parties to stop running the pipeline.
+    # Use the stop_event to signaling actors to stop running.
     stop_event = multiprocessing.Event()
     # Transfer samples from self-play process to training process.
     data_queue = multiprocessing.SimpleQueue()
@@ -139,7 +133,7 @@ def main(argv):
     # Start to collect samples from self-play on a new thread.
     data_collector = threading.Thread(
         target=run_data_collector,
-        args=(data_queue, replay, FLAGS.samples_save_frequency, FLAGS.samples_save_dir, stop_event, tag),
+        args=(data_queue, replay, FLAGS.samples_save_frequency, FLAGS.samples_save_dir, tag),
     )
     data_collector.start()
 
@@ -154,6 +148,7 @@ def main(argv):
             runtime_device,
             actor_network,
             replay,
+            data_queue,
             train_steps_counter,
             FLAGS.checkpoint_dir,
             checkpoint_files,

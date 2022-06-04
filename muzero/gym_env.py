@@ -262,8 +262,7 @@ class StackHistoryWrapper(gym.ObservationWrapper):
             stacked_obs = stacked_obs.reshape((stacked * channel, h, w))
 
             return np.concatenate([stacked_obs, stacked_actions], axis=0)
-        else:
-            return np.concatenate([stacked_obs, stacked_actions], axis=1)
+        return np.concatenate([stacked_obs, stacked_actions], axis=1)
 
     def step(self, action):
         observation, reward, done, info = self.env.step(action)

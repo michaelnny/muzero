@@ -5,7 +5,7 @@ warnings.filterwarnings('ignore', category=DeprecationWarning)
 from pathlib import Path
 import shutil
 import timeit
-from typing import Mapping, Text
+from typing import Mapping, Text, List
 import numpy as np
 
 from torch.utils.tensorboard import SummaryWriter
@@ -56,13 +56,13 @@ class TensorboardEpisodTracker:
             episode_step = self._episode_steps[-1]
 
             # tracker per step
-            self._writer.add_scalar('self_play(steps)/num_episodes', num_episodes, tb_steps)
-            self._writer.add_scalar('self_play(steps)/episode_return', episode_return, tb_steps)
-            self._writer.add_scalar('self_play(steps)/episode_steps', episode_step, tb_steps)
+            self._writer.add_scalar('actor(env_steps)/num_episodes', num_episodes, tb_steps)
+            self._writer.add_scalar('actor(env_steps)/episode_return', episode_return, tb_steps)
+            self._writer.add_scalar('actor(env_steps)/episode_steps', episode_step, tb_steps)
 
             time_stats = self.get_time_stat()
-            self._writer.add_scalar('self_play(steps)/run_duration(minutes)', time_stats['duration'] / 60, tb_steps)
-            self._writer.add_scalar('self_play(steps)/step_rate(second)', time_stats['step_rate'], tb_steps)
+            # self._writer.add_scalar('actor(env_steps)/run_duration(minutes)', time_stats['duration'] / 60, tb_steps)
+            self._writer.add_scalar('actor(env_steps)/step_rate(second)', time_stats['step_rate'], tb_steps)
 
     def get_time_stat(self) -> Mapping[Text, float]:
         """Returns statistics as a dictionary."""
@@ -97,14 +97,14 @@ class TensorboardLearnerTracker:
 
         # To improve performance, log per 100 train steps.
         if self._num_steps_since_reset % 100 == 0:
-            # tracker per step
-            self._writer.add_scalar('learner(train_steps)/loss', loss, self._num_steps_since_reset)
-            self._writer.add_scalar('learner(train_steps)/learning_rate', lr, self._num_steps_since_reset)
+
+            tb_steps = self._num_steps_since_reset
+            self._writer.add_scalar('learner(train_steps)/loss', loss, tb_steps)
+            self._writer.add_scalar('learner(train_steps)/learning_rate', lr, tb_steps)
 
             time_stats = self.get_time_stat()
-            self._writer.add_scalar(
-                'learner(train_steps)/step_rate(minutes)', time_stats['step_rate'] / 60, self._num_steps_since_reset
-            )
+            self._writer.add_scalar('learner(train_steps)/step_rate(minutes)', time_stats['step_rate'] / 60, tb_steps)
+            self._writer.add_scalar('learner(train_steps)/run_duration(minutes)', time_stats['duration'] / 60, tb_steps)
 
     def get_time_stat(self) -> Mapping[Text, float]:
         """Returns statistics as a dictionary."""
@@ -127,6 +127,45 @@ class TensorboardEvaluatorTracker:
         self._num_steps_since_reset = None
         self._writer = writer
 
+        # # Use custom layout.
+        # layout = {
+        #     "evaluator(train_steps)": {
+        #         "episode_returns": ["Multiline", ["episode_returns/min", "episode_returns/max", "episode_returns/mean"]],
+        #         "episode_steps": ["Multiline", ["episode_steps/min", "episode_steps/max", "episode_steps/mean"]],
+        #     },
+        # }
+
+        # self._writer.add_custom_scalars(layout)
+
+    def reset(self) -> None:
+        """Resets all gathered statistics, not to be called between episodes."""
+        self._num_steps_since_reset = 0
+
+    def step(self, episode_returns: List[int], episode_steps: List[int], train_steps: int) -> None:
+        self._num_steps_since_reset = train_steps
+
+        # self._writer.add_scalar('episode_returns/min', np.min(episode_returns), self._num_steps_since_reset)
+        # self._writer.add_scalar('episode_returns/max', np.max(episode_returns), self._num_steps_since_reset)
+        # self._writer.add_scalar('episode_returns/mean', np.mean(episode_returns), self._num_steps_since_reset)
+        # self._writer.add_scalar('episode_steps/min', np.min(episode_steps), self._num_steps_since_reset)
+        # self._writer.add_scalar('episode_steps/max', np.max(episode_steps), self._num_steps_since_reset)
+        # self._writer.add_scalar('episode_steps/mean', np.mean(episode_steps), self._num_steps_since_reset)
+
+        self._writer.add_scalar(
+            'evaluator(train_steps)/mean_episode_returns', np.mean(episode_returns), self._num_steps_since_reset
+        )
+        self._writer.add_scalar(
+            'evaluator(train_steps)/mean_episode_steps', np.mean(episode_steps), self._num_steps_since_reset
+        )
+
+
+class TensorboardBoardGameEvaluatorTracker:
+    """TensorboardBoardGameEvaluatorTracker to write to tensorboard"""
+
+    def __init__(self, writer: SummaryWriter):
+        self._num_steps_since_reset = None
+        self._writer = writer
+
     def reset(self) -> None:
         """Resets all gathered statistics, not to be called between episodes."""
         self._num_steps_since_reset = 0
@@ -139,7 +178,7 @@ class TensorboardEvaluatorTracker:
         self._writer.add_scalar('evaluator(train_steps)/episode_steps', episode_steps, self._num_steps_since_reset)
 
 
-def make_self_play_trackers(run_log_dir='actor'):
+def make_actor_trackers(run_log_dir='actor'):
     """
     Create trackers for the training/evaluation run.
 
@@ -181,7 +220,7 @@ def make_learner_trackers(run_log_dir='learner'):
     ]
 
 
-def make_evaluator_trackers(run_log_dir='evaluator'):
+def make_evaluator_trackers(run_log_dir='evaluator', is_board_game: bool = False):
     """
     Create trackers for the evaluator run.
 
@@ -197,6 +236,7 @@ def make_evaluator_trackers(run_log_dir='evaluator'):
 
     writer = SummaryWriter(tb_log_dir)
 
-    return [
-        TensorboardEvaluatorTracker(writer),
-    ]
+    if is_board_game:
+        return [TensorboardBoardGameEvaluatorTracker(writer)]
+
+    return [TensorboardEvaluatorTracker(writer)]

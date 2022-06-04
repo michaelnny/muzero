@@ -13,16 +13,16 @@ from muzero.core import make_classic_config
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("environment_name", 'CartPole-v1', "Classic problem like 'CartPole-v1', 'LunarLander-v2'")
-flags.DEFINE_integer("stack_history", 4, "Stack previous states.")
+flags.DEFINE_integer("stack_history", 0, "Stack previous states.")
 
 flags.DEFINE_integer('seed', 1, 'Seed the runtime.')
 
 flags.DEFINE_string(
     'load_checkpoint_file',
-    'checkpoints/classic/LunarLander-v2_train_steps_268000',
+    'checkpoints/classic/CartPole-v1_train_steps_61000',
     'Load the checkpoint from file.',
 )
-flags.DEFINE_string('record_video_dir', 'recording/classic', 'Record play video.')
+flags.DEFINE_string('record_video_dir', 'recordings/classic', 'Record play video.')
 
 
 def main(argv):

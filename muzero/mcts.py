@@ -256,12 +256,9 @@ def generate_play_policy(visits_count: np.ndarray, temperature: float) -> np.nda
         # We limit the exponent in the range of [1.0, 5.0]
         # to avoid overflow when doing power operation over large numbers
         exp = max(1.0, min(5.0, 1.0 / temperature))
+        visits_count = np.power(visits_count, exp)
 
-        pi_logits = np.power(visits_count, exp)
-        pi_prob = pi_logits / np.sum(pi_logits)
-    else:
-        pi_prob = visits_count / np.sum(visits_count)
-
+    pi_prob = visits_count / np.sum(visits_count)
     return pi_prob
 
 
@@ -284,7 +281,6 @@ def set_illegal_action_probs_to_zero(actions_mask: np.ndarray, prob: np.ndarray)
     return prob
 
 
-@torch.no_grad()
 def uct_search(
     state: np.ndarray,
     network: MuZeroNet,
@@ -295,7 +291,7 @@ def uct_search(
     current_player: int,
     opponent_player: int,
     best_action: bool = False,
-) -> Tuple[int, np.ndarray, float, float]:
+) -> Tuple[int, np.ndarray, float]:
     """Single-threaded Upper Confidence Bound (UCB) for Trees (UCT) search without any rollout.
 
     It follows the following general UCT search algorithm.
@@ -328,42 +324,35 @@ def uct_search(
             a integer indicate the sampled action to play in the environment.
             a 1D numpy.array search policy action probabilities from the MCTS search result.
             a float represent the search value of the root node.
-            a float represent the delta between search value and predicted value for the root node, used as priority in PER.
 
     """
 
     if config.is_board_game:
         assert config.discount == 1.0
 
-    init_current_player = copy.deepcopy(current_player)
-    init_opponent_player = copy.deepcopy(opponent_player)
-    actions_mask = copy.deepcopy(actions_mask)
-
     min_max_stats = MinMaxStats(config.known_bounds)
 
     # Create root node
     state = torch.from_numpy(state).to(device=device, dtype=torch.float32)
     network_out = network.initial_inference(state[None, ...])
-    root_value, prior_prob, hidden_state = network_out.value, network_out.pi_probs, network_out.hidden_state
-
-    root_node = Node()
+    prior_prob = network_out.pi_probs
+    root_node = Node(prior=0.0)
 
     # Add dirichlet noise to the prior probabilities to root node.
-    if config.root_dirichlet_alpha is not None and config.root_dirichlet_alpha > 0.0:
+    if config.root_dirichlet_alpha > 0.0 and config.root_exploration_eps > 0.0:
         prior_prob = add_dirichlet_noise(prior_prob, eps=config.root_exploration_eps, alpha=config.root_dirichlet_alpha)
     # Set prior probabilities to zero for illegal actions.
     if actions_mask is not None:
         prior_prob = set_illegal_action_probs_to_zero(actions_mask, prior_prob)
 
-    root_node.expand(prior_prob, init_current_player, hidden_state, network_out.reward)
-    # root_node.backup(root_value, init_current_player, min_max_stats, is_board_game)
+    root_node.expand(prior_prob, current_player, network_out.hidden_state, network_out.reward)
 
     for _ in range(config.num_simulations):
         # Phase 1 - Select
         # Select best child node until reach a leaf node
         node = root_node
-        curr_player = init_current_player
-        oppo_player = init_opponent_player
+        curr_player = current_player
+        oppo_player = opponent_player
 
         while node.is_expanded:
             node = node.best_child(min_max_stats, config)
@@ -395,4 +384,4 @@ def uct_search(
         # Sample a action.
         action = np.random.choice(np.arange(pi_prob.shape[0]), p=pi_prob)
 
-    return (action, pi_prob, root_node.Q, abs(root_node.Q - root_value))
+    return (action, pi_prob, root_node.Q)

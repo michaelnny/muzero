@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 
 
 def signed_hyperbolic(x: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
@@ -14,18 +15,35 @@ def signed_parabolic(x: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
 
 def normalize_hidden_state(x: torch.Tensor) -> torch.Tensor:
     """Normalize hidden state to the range [0, 1]"""
-    orig_shape = x.shape
-
-    x_flatten = torch.flatten(x, 1, -1)
-
-    _min = torch.min(x_flatten, dim=1, keepdim=True)[0]
-    _max = torch.max(x_flatten, dim=1, keepdim=True)[0]
-    normalized = (x_flatten - _min) / (_max - _min)
-    normalized = normalized.view(orig_shape)
+    _min = x.min(dim=1, keepdim=True)[0]
+    _max = x.max(dim=1, keepdim=True)[0]
+    normalized = (x - _min) / (_max - _min)
     return normalized
 
 
-def logits_to_transformed_expected_value(logits: torch.Tensor, supports: torch.Tensor) -> torch.Tensor:
+def transform_to_2hot(scalar: torch.Tensor, min_value: float, max_value: float, num_bins: int) -> torch.Tensor:
+    """Transforms a scalar tensor to a 2 hot representation."""
+    scalar = torch.clamp(scalar, min_value, max_value)
+    scalar_bin = (scalar - min_value) / (max_value - min_value) * (num_bins - 1)
+    lower, upper = torch.floor(scalar_bin), torch.ceil(scalar_bin)
+    lower_value = (lower / (num_bins - 1.0)) * (max_value - min_value) + min_value
+    upper_value = (upper / (num_bins - 1.0)) * (max_value - min_value) + min_value
+    p_lower = (upper_value - scalar) / (upper_value - lower_value + 1e-5)
+    p_upper = 1 - p_lower
+    lower_one_hot = F.one_hot(lower.long(), num_bins) * torch.unsqueeze(p_lower, -1)
+    upper_one_hot = F.one_hot(upper.long(), num_bins) * torch.unsqueeze(p_upper, -1)
+    return lower_one_hot + upper_one_hot
+
+
+def transform_from_2hot(probs: torch.Tensor, min_value: float, max_value: float, num_bins: int) -> torch.Tensor:
+    """Transforms from a categorical distribution to a scalar."""
+    support_space = torch.linspace(min_value, max_value, num_bins)
+    support_space = support_space.expand_as(probs)
+    scalar = torch.sum(probs * support_space, dim=-1, keepdim=True)
+    return scalar
+
+
+def logits_to_transformed_expected_value(logits: torch.Tensor, support_size: int) -> torch.Tensor:
     """
     Given raw logits (could be either reward or state value), do the following operations:
         - apply softmax
@@ -39,11 +57,12 @@ def logits_to_transformed_expected_value(logits: torch.Tensor, supports: torch.T
     Returns:
         a 2D tensor which represent the transformed expected value, shape [B, 1].
     """
+    max_value = (support_size - 1) // 2
+    min_value = -max_value
 
-    # Compute expected scalar.
-    probs = torch.softmax(logits, dim=1)
-    support = supports.to(device=logits.device, dtype=probs.dtype).expand(probs.shape)
-    x = torch.sum(support.detach() * probs, dim=1, keepdim=True)
+    # Compute expected scalar value.
+    probs = torch.softmax(logits, dim=-1)
+    x = transform_from_2hot(probs, min_value, max_value, support_size)
 
     # Apply transform funciton.
     x = signed_parabolic(x)
@@ -58,27 +77,16 @@ def scalar_to_categorical_probabilities(x: torch.Tensor, support_size: int) -> t
 
     Args:
         x: 2D tensor contains the scalar values, shape [B, T].
-        support_size: the size of the support to project on to.
+        support_size: the full size of the support to project on to.
 
     Returns:
         a 3D tensor which represent the transformed and projected probabilities, shape [B, T, support_size].
     """
 
-    # Apply inverse transform funciton.
+    # # Apply inverse transform funciton.
     x = signed_hyperbolic(x)
 
-    max_size = (support_size - 1) // 2
-    min_size = -max_size
+    max_value = (support_size - 1) // 2
+    min_value = -max_value
 
-    x.clamp_(min_size, max_size)
-    x_low = x.floor()
-    x_high = x.ceil()
-    p_high = x - x_low
-    p_low = 1 - p_high
-
-    support = torch.zeros(x.shape[0], x.shape[1], support_size).to(x.device)
-    x_high_idx, x_low_idx = x_high - min_size, x_low - min_size
-    support.scatter_(2, x_high_idx.long().unsqueeze(-1), p_high.unsqueeze(-1))
-    support.scatter_(2, x_low_idx.long().unsqueeze(-1), p_low.unsqueeze(-1))
-
-    return support
+    return transform_to_2hot(x, min_value, max_value, support_size)

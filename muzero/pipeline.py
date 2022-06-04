@@ -1,5 +1,5 @@
 from absl import logging
-from typing import Callable, Iterable, List, Tuple, Mapping, Text, Any
+from typing import Iterable, List, Mapping, Text, Any
 from pathlib import Path
 import sys
 import signal
@@ -18,12 +18,13 @@ from muzero.core import MuZeroConfig
 from muzero.games.env import BoardGameEnv
 from muzero.network import MuZeroNet
 from muzero.replay import Transition, PrioritizedReplay
-from muzero.trackers import make_self_play_trackers, make_learner_trackers, make_evaluator_trackers
+from muzero.trackers import make_actor_trackers, make_learner_trackers, make_evaluator_trackers
 from muzero.mcts import uct_search
-from muzero.util import scalar_to_categorical_probabilities, logits_to_transformed_expected_value
+from muzero.util import scalar_to_categorical_probabilities, logits_to_transformed_expected_value, signed_hyperbolic
 from muzero.rating import compute_elo_rating
 
 
+@torch.no_grad()
 def run_self_play(
     config: MuZeroConfig,
     rank: int,
@@ -57,7 +58,7 @@ def run_self_play(
     if tag is not None and tag != '':
         tb_log_dir = f'{tag}_{tb_log_dir}'
 
-    trackers = make_self_play_trackers(tb_log_dir) if config.use_tensorboard else []
+    trackers = make_actor_trackers(tb_log_dir) if config.use_tensorboard else []
     for tracker in trackers:
         tracker.reset()
 
@@ -78,7 +79,7 @@ def run_self_play(
             # Make a copy of current player id.
             player_id = copy.deepcopy(env.current_player)
 
-            action, pi_prob, root_value, value_error = uct_search(
+            action, pi_prob, root_value = uct_search(
                 state=obs,
                 network=network,
                 device=device,
@@ -95,27 +96,29 @@ def run_self_play(
             for tracker in trackers:
                 tracker.step(reward, done)
 
-            episode_trajectory.append((obs, action, reward, pi_prob, root_value, value_error, player_id))
+            episode_trajectory.append((obs, action, reward, pi_prob, root_value, player_id))
 
             obs = next_obs
 
             # Send samples to learner every 200 steps on Atari games.
-            if not config.is_board_game and len(episode_trajectory) == 200 + config.unroll_steps + config.td_steps:
+            # Here we accmulate 200 + unroll_steps + td_steps because we want to compute the target and unroll sequences.
+            seq_length = 200
+            if not config.is_board_game and len(episode_trajectory) == seq_length + config.unroll_steps + config.td_steps:
                 # Unpack list of tuples into seperate lists.
-                observations, actions, rewards, pi_probs, root_values, priorities, player_ids = map(
-                    list, zip(*episode_trajectory)
-                )
+                observations, actions, rewards, pi_probs, root_values, player_ids = map(list, zip(*episode_trajectory))
                 # Compute n_step target value.
                 target_values = compute_n_step_target(rewards, root_values, config.td_steps, config.discount)
 
+                priorities = np.abs(np.array(root_values) - np.array(target_values))
+
                 # Make unroll sequences and send to learner.
                 for transition, priority in make_unroll_sequence(
-                    observations[:200],
-                    actions[: 200 + config.unroll_steps],
-                    rewards[: 200 + config.unroll_steps],
-                    pi_probs[: 200 + config.unroll_steps],
-                    target_values[: 200 + config.unroll_steps],
-                    priorities[: 200 + config.unroll_steps],
+                    observations[:seq_length],
+                    actions[: seq_length + config.unroll_steps],
+                    rewards[: seq_length + config.unroll_steps],
+                    pi_probs[: seq_length + config.unroll_steps],
+                    target_values[: seq_length + config.unroll_steps],
+                    priorities[: seq_length + config.unroll_steps],
                     config.unroll_steps,
                 ):
                     data_queue.put((transition, priority))
@@ -128,7 +131,7 @@ def run_self_play(
             logging.info(f'Self-play actor {rank} played {game} games')
 
         # Unpack list of tuples into seperate lists.
-        observations, actions, rewards, pi_probs, root_values, priorities, player_ids = map(list, zip(*episode_trajectory))
+        observations, actions, rewards, pi_probs, root_values, player_ids = map(list, zip(*episode_trajectory))
 
         if config.is_board_game:
             # Using MC returns as target value.
@@ -136,6 +139,8 @@ def run_self_play(
         else:
             # Compute n_step target value.
             target_values = compute_n_step_target(rewards, root_values, config.td_steps, config.discount)
+
+        priorities = np.abs(np.array(root_values) - np.array(target_values))
 
         # Make unroll sequences and send to learner.
         for transition, priority in make_unroll_sequence(
@@ -157,6 +162,7 @@ def run_training(  # noqa: C901
     device: torch.device,
     actor_network: torch.nn.Module,
     replay: PrioritizedReplay,
+    data_queue: multiprocessing.SimpleQueue,
     train_steps_counter: multiprocessing.Value,
     checkpoint_dir: str,
     checkpoint_files: List,
@@ -191,7 +197,7 @@ def run_training(  # noqa: C901
         tb_log_dir = f'{tag}_{tb_log_dir}'
         ckpt_prefix = f'{tag}_{ckpt_prefix}'
 
-    trackers = make_learner_trackers(tb_log_dir)
+    trackers = make_learner_trackers(tb_log_dir) if config.use_tensorboard else []
     for tracker in trackers:
         tracker.reset()
 
@@ -259,12 +265,14 @@ def run_training(  # noqa: C901
             time.sleep(config.train_delay)
 
     stop_event.set()
+    time.sleep(60 * 5)
+    data_queue.put('STOP')
 
 
 def run_board_game_evaluator(
     config: MuZeroConfig,
     old_checkpoint_network: torch.nn.Module,
-    new_checkpoint_network: torch.nn.Module,
+    new_ckpt_network: torch.nn.Module,
     device: torch.device,
     env: BoardGameEnv,
     temperature: float,
@@ -273,13 +281,14 @@ def run_board_game_evaluator(
     initial_elo: int = -2000,
     tag: str = None,
 ) -> None:
-    """Monitoring training progress by play a single game with new checkpoint againt last checkpoint.
+    """
+    Monitoring training progress by play a single game with new checkpoint againt last checkpoint.
     This is for board game only.
 
     Args:
         config: a MuZeroConfig instance.
         old_checkpoint_network: the last checkpoint network.
-        new_checkpoint_network: new checkpoint network we want to evaluate.
+        new_ckpt_network: new checkpoint network we want to evaluate.
         device: torch runtime device.
         env: a BoardGameEnv type environment.
         temperature: the temperature exploration rate after MCTS search
@@ -305,32 +314,34 @@ def run_board_game_evaluator(
     if tag is not None and tag != '':
         tb_log_dir = f'{tag}_{tb_log_dir}'
 
-    trackers = make_evaluator_trackers(tb_log_dir)
+    trackers = make_evaluator_trackers(tb_log_dir, True) if config.use_tensorboard else []
     for tracker in trackers:
         tracker.reset()
 
     disable_auto_grad(old_checkpoint_network)
-    disable_auto_grad(new_checkpoint_network)
+    disable_auto_grad(new_ckpt_network)
 
     old_checkpoint_network = old_checkpoint_network.to(device=device)
-    new_checkpoint_network = new_checkpoint_network.to(device=device)
+    new_ckpt_network = new_ckpt_network.to(device=device)
 
     # Set initial elo ratings
     black_elo = initial_elo
     white_elo = initial_elo
 
-    while not stop_event.is_set():
+    while True:
+        if stop_event.is_set() and len(checkpoint_files) == 0:
+            break
         if len(checkpoint_files) == 0:
             continue
 
         # Remove the checkpoint file path from the shared list.
         ckpt_file = checkpoint_files.pop(0)
         loaded_state = load_checkpoint(ckpt_file, device)
-        new_checkpoint_network.load_state_dict(loaded_state['network'])
+        new_ckpt_network.load_state_dict(loaded_state['network'])
         train_steps = loaded_state['train_steps']
         del loaded_state
 
-        new_checkpoint_network.eval()
+        new_ckpt_network.eval()
         old_checkpoint_network.eval()
 
         obs = env.reset()
@@ -339,7 +350,7 @@ def run_board_game_evaluator(
         while not done:
             # Black is the new checkpoint, white is last checkpoint.
             if env.current_player == env.black_player_id:
-                network = new_checkpoint_network
+                network = new_ckpt_network
             else:
                 network = old_checkpoint_network
 
@@ -355,7 +366,7 @@ def run_board_game_evaluator(
                 best_action=True,
             )
 
-            _, _, done, _ = env.step(action)
+            obs, _, done, _ = env.step(action)
 
         if env.winner == env.black_player_id:
             black_elo, _ = compute_elo_rating(0, black_elo, white_elo)
@@ -366,7 +377,98 @@ def run_board_game_evaluator(
         for tracker in trackers:
             tracker.step(black_elo, env.steps, train_steps)
 
-        old_checkpoint_network.load_state_dict(new_checkpoint_network.state_dict())
+        old_checkpoint_network.load_state_dict(new_ckpt_network.state_dict())
+
+
+def run_evaluator(
+    config: MuZeroConfig,
+    new_ckpt_network: torch.nn.Module,
+    device: torch.device,
+    env: BoardGameEnv,
+    temperature: float,
+    checkpoint_files: List,
+    stop_event: multiprocessing.Event,
+    tag: str = None,
+    num_episodes: int = 3,
+) -> None:
+    """
+    Monitoring training progress by play few games with the most recent new checkpoint.
+
+    Args:
+        config: a MuZeroConfig instance.
+        new_ckpt_network: new checkpoint network we want to evaluate.
+        device: torch runtime device.
+        env: a BoardGameEnv type environment.
+        temperature: the temperature exploration rate after MCTS search
+            to generate play policy.
+        checkpoint_files: a shared list contains the full path for the most recent new checkpoint.
+        stop_event: a multiprocessing.Event signaling to stop running pipeline.
+        tag: add tag to tensorboard log dir.
+        num_episodes: run evaluation for N episodes, default 3.
+
+    """
+
+    init_absl_logging()
+    handle_exit_signal()
+    logging.info('Start evaluator')
+
+    tb_log_dir = 'evaluator'
+
+    if tag is not None and tag != '':
+        tb_log_dir = f'{tag}_{tb_log_dir}'
+
+    trackers = make_evaluator_trackers(tb_log_dir, False) if config.use_tensorboard else []
+    for tracker in trackers:
+        tracker.reset()
+
+    disable_auto_grad(new_ckpt_network)
+    new_ckpt_network = new_ckpt_network.to(device=device)
+
+    while True:
+        if stop_event.is_set() and len(checkpoint_files) == 0:
+            break
+        if len(checkpoint_files) == 0:
+            continue
+
+        # Remove the checkpoint file path from the shared list.
+        ckpt_file = checkpoint_files.pop(0)
+        loaded_state = load_checkpoint(ckpt_file, device)
+        new_ckpt_network.load_state_dict(loaded_state['network'])
+        train_steps = loaded_state['train_steps']
+        del loaded_state
+
+        new_ckpt_network.eval()
+
+        eval_returns, eval_steps = [], []
+
+        for _ in range(num_episodes):
+            obs = env.reset()
+            done = False
+            steps = 0
+            returns = 0.0
+
+            while not done:
+                action, *_ = uct_search(
+                    state=obs,
+                    network=new_ckpt_network,
+                    device=device,
+                    config=config,
+                    temperature=temperature,
+                    actions_mask=env.actions_mask,
+                    current_player=env.current_player,
+                    opponent_player=env.opponent_player,
+                    best_action=True,
+                )
+
+                obs, reward, done, _ = env.step(action)
+                steps += 1
+                returns += reward
+
+            eval_returns.append(returns)
+            eval_steps.append(steps)
+
+        for tracker in trackers:
+            tracker.step(eval_returns, eval_steps, train_steps)
 
 
 def run_data_collector(
@@ -374,7 +476,6 @@ def run_data_collector(
     replay: PrioritizedReplay,
     save_frequency: int,
     save_dir: str,
-    stop_event: multiprocessing.Event,
     tag: str = None,
 ) -> None:
     """Collect samples from self-play,
@@ -403,9 +504,11 @@ def run_data_collector(
 
     should_save = save_samples_dir.exists() and save_frequency > 0
 
-    while not stop_event.is_set():
+    while True:
         try:
             item = data_queue.get()
+            if item == 'STOP':
+                break
             transition, priority = item
             replay.add(transition, priority)
             if should_save and replay.num_added > 1 and replay.num_added % save_frequency == 0:
@@ -429,13 +532,13 @@ def calc_loss(network: MuZeroNet, device: torch.device, transitions: Transition,
     # [B, T, num_actions]
     target_pi_prob = torch.from_numpy(transitions.pi_prob).to(device=device, dtype=torch.float32, non_blocking=True)
 
+    # with torch.no_grad():
     # Convert scalar targets into transformed support (probabilities).
     if network.mse_loss_for_value:
         target_value = target_value_scalar
     else:
         # [B, T, num_actions]
         target_value = scalar_to_categorical_probabilities(target_value_scalar, network.value_support_size)
-
     if network.mse_loss_for_reward:
         target_reward = target_reward_scalar
     else:
@@ -446,6 +549,8 @@ def calc_loss(network: MuZeroNet, device: torch.device, transitions: Transition,
     reward_loss, value_loss, policy_loss = (0, 0, 0)
     loss_scale = 1.0 / T
 
+    priorities = np.zeros((B,))
+
     # Get initial hidden state.
     hidden_state = network.represent(state)
 
@@ -454,28 +559,29 @@ def calc_loss(network: MuZeroNet, device: torch.device, transitions: Transition,
         pred_pi_logits, pred_value = network.prediction(hidden_state)
         hidden_state, pred_reward = network.dynamics(hidden_state, action[:, t].unsqueeze(1))
 
+        value_loss += loss_func(pred_value.squeeze(), target_value[:, t], network.mse_loss_for_value)
+
+        # Shouldn't we exclude the reward loss for board games as stated in the paper?
+        reward_loss += loss_func(pred_reward.squeeze(), target_reward[:, t], network.mse_loss_for_reward)
+        policy_loss += loss_func(pred_pi_logits, target_pi_prob[:, t])
+
+        # Scale the gradient for dynamics function by 0.5.
+        hidden_state.register_hook(lambda grad: grad * 0.5)
+
         if t == 0:
             with torch.no_grad():
                 # Using the delta between predicted value and target value (for the initial hidden state) as priorities.
                 if network.mse_loss_for_value:
                     pred_value_scalar = pred_value.squeeze(1)
                 else:
-                    pred_value_scalar = logits_to_transformed_expected_value(pred_value, network.value_supports).squeeze(1)
+                    pred_value_scalar = logits_to_transformed_expected_value(pred_value, network.value_support_size).squeeze(1)
+                priorities = torch.abs(pred_value_scalar.detach() - target_value_scalar[:, t]).cpu().numpy()
 
-                priorities = torch.abs(pred_value_scalar - target_value_scalar[:, 0]).cpu().numpy()
+    reward_loss = torch.mean(reward_loss * weights.detach())
+    value_loss = torch.mean(value_loss * weights.detach())
+    policy_loss = torch.mean(policy_loss * weights.detach())
 
-        # Scale the gradient for dynamics function by 0.5.
-        hidden_state.register_hook(lambda grad: grad * 0.5)
-
-        value_loss += loss_func(pred_value.squeeze(), target_value[:, t], network.mse_loss_for_value)
-        reward_loss += loss_func(pred_reward.squeeze(), target_reward[:, t], network.mse_loss_for_reward)
-        policy_loss += F.cross_entropy(pred_pi_logits, target_pi_prob[:, t], reduction='none')
-
-    reward_loss = reward_loss * weights.detach()
-    value_loss = value_loss * weights.detach()
-    policy_loss = policy_loss * weights.detach()
-
-    loss = torch.mean(reward_loss + value_loss + policy_loss)
+    loss = reward_loss + value_loss + policy_loss
 
     # Scale the loss by 1/unroll_step.
     loss.register_hook(lambda grad: grad * loss_scale)
@@ -496,12 +602,18 @@ def loss_func(prediction: torch.Tensor, target: torch.Tensor, mse: bool = False)
         return F.mse_loss(prediction, target, reduction='none')
 
     # [B]
-    # return torch.sum(-target * F.log_softmax(prediction, dim=1), dim=1)
-    return F.cross_entropy(prediction, target, reduction='none')
+    return torch.sum(-target * F.log_softmax(prediction, dim=1), dim=1)
+    # return F.cross_entropy(prediction, target, reduction='none')
+
+
+def scale_gradient(x: torch.Tensor, scale: float) -> torch.Tensor:
+    return scale * x + (1.0 - scale) * torch.detach(x)
 
 
 def compute_n_step_target(in_rewards: List[float], in_root_values: List[float], td_steps: int, discount: float) -> List[float]:
     """Compute n-step target for Atari and classic openAI Gym problems.
+
+    zt = ut+1 + γut+2 + ... + γn−1ut+n + γnνt+n
 
     Args:
         in_rewards: a list of rewards received from the env, length T.
@@ -532,10 +644,10 @@ def compute_n_step_target(in_rewards: List[float], in_root_values: List[float], 
     target_values = []
     for t in range(T):
         bootstrap_index = t + td_steps
-        target = sum([r * discount**i for i, r in enumerate(rewards[t:bootstrap_index])])
+        target = sum([discount**i * reward for i, reward in enumerate(rewards[t:bootstrap_index])])
 
         # Add MCTS root node search value for bootstrap.
-        target += root_values[bootstrap_index]
+        target += discount**td_steps * root_values[bootstrap_index]
         target_values.append(target)
 
     return target_values
@@ -611,9 +723,8 @@ def make_unroll_sequence(
     if len(values) == T:
         values += [0] * unroll_steps
     if len(pi_probs) == T:
-        # Uniform policy
-        uniform_policy = np.ones_like(pi_probs[-1]) / len(pi_probs[-1])
-        pi_probs += [uniform_policy] * unroll_steps
+        absorb_policy = np.ones_like(pi_probs[-1]) / len(pi_probs[-1])
+        pi_probs += [absorb_policy] * unroll_steps
 
     assert len(actions) == len(rewards) == len(values) == len(pi_probs) == T + unroll_steps
 

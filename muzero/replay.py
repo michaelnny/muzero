@@ -27,15 +27,18 @@ class PrioritizedReplay(Generic[ReplayStructure]):
     def __init__(
         self,
         capacity: int,
-        structure: ReplayStructure = None,
         priority_exponent: float = 1.0,
         importance_sampling_exponent: float = 1.0,
     ):
+        """
+        Args:
+            capacity: maximum number of samples in the replay.
+            priority_exponent: priority exponent, if set to 0 it becomes Uniform Replay, default 1.0.
+            importance_sampling_exponent: importance sampling exponent, default 1.0.
+        """
         if capacity <= 0:
             raise ValueError(f'Expect capacity to be a positive integer, got {capacity}')
-        if structure is None:
-            structure = TransitionStructure
-        self.structure = structure
+        self.structure = TransitionStructure
         self._capacity = capacity
         self._storage = [None] * capacity
         self._num_added = 0
@@ -71,7 +74,7 @@ class PrioritizedReplay(Generic[ReplayStructure]):
             weights = np.ones_like(indices, dtype=np.float32)
         else:
             priorities = (self._priorities[: self.size]) ** self._priority_exponent
-            priorities = np.clip(priorities, a_min=1e-8, a_max=1e8)  # Avoid probabilities contain NaN
+            # priorities = np.clip(priorities, a_min=1e-8, a_max=1e8)  # Avoid probabilities contain NaN
             probs = priorities / np.sum(priorities)
             indices = np.random.choice(np.arange(probs.shape[0]), size=batch_size, replace=True, p=probs)
 
@@ -88,7 +91,7 @@ class PrioritizedReplay(Generic[ReplayStructure]):
     def update_priorities(self, indices: Sequence[int], priorities: Sequence[float]) -> None:
         """Updates indices with given priorities."""
         for i, p in zip(indices, priorities):
-            if not 0.0 < p:
+            if p <= 0.0:
                 # raise RuntimeError(f'Expect priority to be greater than 0, got {p}')
                 p = 1e-8  # Avoid NaNs
             self._priorities[i] = p

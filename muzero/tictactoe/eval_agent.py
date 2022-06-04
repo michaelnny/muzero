@@ -2,7 +2,6 @@ from absl import app
 from absl import flags
 from absl import logging
 import os
-import gym
 import time
 import torch
 
@@ -18,12 +17,12 @@ flags.DEFINE_integer('seed', 1, 'Seed the runtime.')
 
 flags.DEFINE_string(
     'load_black_checkpoint_file',
-    'checkpoints/tictactoe/TicTacToe_MLP_train_steps_55000',
+    'saved_checkpoints/TicTacToe_train_steps_35000',
     'Load the last checkpoint from file.',
 )
 flags.DEFINE_string(
     'load_white_checkpoint_file',
-    'checkpoints/tictactoe/TicTacToe_MLP_train_steps_55000',
+    'saved_checkpoints/TicTacToe_train_steps_35000',
     'Load the last checkpoint from file.',
 )
 

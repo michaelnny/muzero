@@ -61,10 +61,8 @@ def main(argv):
         return MuZeroBoardGameNet(input_shape, num_actions, config.num_res_blocks, config.num_planes)
 
     network = create_network()
-    optimizer = torch.optim.Adam(
-        network.parameters(), lr=config.lr_init, weight_decay=config.weight_decay, eps=config.adam_eps
-    )
-    lr_scheduler = MultiStepLR(optimizer, milestones=config.lr_boundaries, gamma=config.lr_decay_rate)
+    optimizer = torch.optim.Adam(network.parameters(), lr=config.lr_init, weight_decay=config.weight_decay)
+    lr_scheduler = MultiStepLR(optimizer, milestones=config.lr_milestones, gamma=config.lr_decay_rate)
 
     actor_network = create_network()
     actor_network.share_memory()
@@ -73,14 +71,9 @@ def main(argv):
     old_ckpt_network = create_network()
     new_ckpt_network = create_network()
 
-    # By set priority_exponent=0, this becomes uniform replay
-    replay = PrioritizedReplay(
-        config.replay_capacity,
-        priority_exponent=config.priority_exponent,
-        importance_sampling_exponent=config.importance_sampling_exponent,
-    )
+    replay = PrioritizedReplay(config.replay_capacity, config.priority_exponent, config.importance_sampling_exponent)
 
-    # Train loop use the stop_event to signaling other parties to stop running the pipeline.
+    # Use the stop_event to signaling actors to stop running.
     stop_event = multiprocessing.Event()
     # Transfer samples from self-play process to training process.
     data_queue = multiprocessing.SimpleQueue()
@@ -94,7 +87,7 @@ def main(argv):
     # Start to collect samples from self-play on a new thread.
     data_collector = threading.Thread(
         target=run_data_collector,
-        args=(data_queue, replay, FLAGS.samples_save_frequency, FLAGS.samples_save_dir, stop_event, tag),
+        args=(data_queue, replay, FLAGS.samples_save_frequency, FLAGS.samples_save_dir, tag),
     )
     data_collector.start()
 
@@ -109,6 +102,7 @@ def main(argv):
             runtime_device,
             actor_network,
             replay,
+            data_queue,
             train_steps_counter,
             FLAGS.checkpoint_dir,
             checkpoint_files,

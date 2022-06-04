@@ -14,12 +14,12 @@ from muzero.network import MuZeroMLPNet
 from muzero.replay import PrioritizedReplay
 from muzero.core import make_classic_config
 from muzero.gym_env import create_classic_environment
-from muzero.pipeline import run_self_play, run_training, run_data_collector
+from muzero.pipeline import run_self_play, run_training, run_data_collector, run_evaluator
 
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("environment_name", 'CartPole-v1', "Classic problem like 'CartPole-v1', 'LunarLander-v2'")
-flags.DEFINE_integer("stack_history", 4, "Stack previous states.")
+flags.DEFINE_integer("stack_history", 0, "Stack last N states and actions.")
 flags.DEFINE_integer('num_actors', 6, 'Number of self-play actor processes.')
 flags.DEFINE_integer('seed', 1, 'Seed the runtime.')
 flags.DEFINE_string('checkpoint_dir', 'checkpoints/classic', 'Path for checkpoint file.')
@@ -45,6 +45,7 @@ def main(argv):
         create_classic_environment(FLAGS.environment_name, FLAGS.seed + i**2, FLAGS.stack_history)
         for i in range(FLAGS.num_actors)
     ]
+    eval_env = create_classic_environment(FLAGS.environment_name, FLAGS.seed + 2, FLAGS.stack_history)
 
     input_shape = self_play_envs[0].observation_space.shape
     num_actions = self_play_envs[0].action_space.n
@@ -58,23 +59,21 @@ def main(argv):
     network = MuZeroMLPNet(
         input_shape, num_actions, config.num_planes, config.value_support_size, config.reward_support_size, config.hidden_size
     )
-    optimizer = torch.optim.Adam(
-        network.parameters(), lr=config.lr_init, weight_decay=config.weight_decay, eps=config.adam_eps
-    )
-    lr_scheduler = MultiStepLR(optimizer, milestones=config.lr_boundaries, gamma=config.lr_decay_rate)
+    optimizer = torch.optim.Adam(network.parameters(), lr=config.lr_init, weight_decay=config.weight_decay)
+    lr_scheduler = MultiStepLR(optimizer, milestones=config.lr_milestones, gamma=config.lr_decay_rate)
 
     actor_network = MuZeroMLPNet(
         input_shape, num_actions, config.num_planes, config.value_support_size, config.reward_support_size, config.hidden_size
     )
     actor_network.share_memory()
 
-    replay = PrioritizedReplay(
-        config.replay_capacity,
-        priority_exponent=config.priority_exponent,
-        importance_sampling_exponent=config.importance_sampling_exponent,
+    new_ckpt_network = MuZeroMLPNet(
+        input_shape, num_actions, config.num_planes, config.value_support_size, config.reward_support_size, config.hidden_size
     )
 
-    # Train loop use the stop_event to signaling other parties to stop running the pipeline.
+    replay = PrioritizedReplay(config.replay_capacity, config.priority_exponent, config.importance_sampling_exponent)
+
+    # Use the stop_event to signaling actors to stop running.
     stop_event = multiprocessing.Event()
     # Transfer samples from self-play process to training process.
     data_queue = multiprocessing.SimpleQueue()
@@ -88,7 +87,7 @@ def main(argv):
     # Start to collect samples from self-play on a new thread.
     data_collector = threading.Thread(
         target=run_data_collector,
-        args=(data_queue, replay, FLAGS.samples_save_frequency, FLAGS.samples_save_dir, stop_event, tag),
+        args=(data_queue, replay, FLAGS.samples_save_frequency, FLAGS.samples_save_dir, tag),
     )
     data_collector.start()
 
@@ -103,6 +102,7 @@ def main(argv):
             runtime_device,
             actor_network,
             replay,
+            data_queue,
             train_steps_counter,
             FLAGS.checkpoint_dir,
             checkpoint_files,
@@ -111,6 +111,22 @@ def main(argv):
         ),
     )
     learner.start()
+
+    # Start evaluation loop on a seperate process.
+    evaluator = multiprocessing.Process(
+        target=run_evaluator,
+        args=(
+            config,
+            new_ckpt_network,
+            runtime_device,
+            eval_env,
+            0.0,
+            checkpoint_files,
+            stop_event,
+            tag,
+        ),
+    )
+    evaluator.start()
 
     # # Start self-play processes.
     actors = []
@@ -138,6 +154,7 @@ def main(argv):
 
     learner.join()
     data_collector.join()
+    evaluator.join()
 
 
 if __name__ == '__main__':
