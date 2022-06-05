@@ -1,4 +1,18 @@
-"""Neural Network component."""
+# Copyright 2022 Michael Hu. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
+"""MuZero Neural Network component."""
 from typing import NamedTuple, Tuple
 import math
 import torch
@@ -147,7 +161,7 @@ class DynamicsMLPNet(nn.Module):
         )
 
         self.reward_net = nn.Sequential(
-            nn.Linear(hidden_size + num_actions, num_planes),
+            nn.Linear(hidden_size, num_planes),
             nn.ReLU(),
             nn.Linear(num_planes, support_size),
         )
@@ -164,7 +178,7 @@ class DynamicsMLPNet(nn.Module):
         x = torch.cat([hidden_state, onehot_action], dim=1)
 
         hidden_state = self.transition_net(x)
-        reward_logits = self.reward_net(x)
+        reward_logits = self.reward_net(hidden_state)
 
         return hidden_state, reward_logits
 
@@ -225,17 +239,13 @@ class MuZeroMLPNet(MuZeroNet):  # pylint: disable=abstract-method
 
         self.prediction_net = PredictionMLPNet(num_actions, num_planes, hidden_size, value_support_size)
 
-        # self.LN = nn.LayerNorm([hidden_size], elementwise_affine=True)
-
     def represent(self, x: torch.Tensor) -> torch.Tensor:
         hidden_state = self.represent_net(x)
-        # hidden_state = F.relu(self.LN(hidden_state))
         hidden_state = normalize_hidden_state(hidden_state)
         return hidden_state
 
     def dynamics(self, hidden_state: torch.Tensor, action: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         hidden_state, reward_logits = self.dynamics_net(hidden_state, action)
-        # hidden_state = F.relu(self.LN(hidden_state))
         hidden_state = normalize_hidden_state(hidden_state)
         return hidden_state, reward_logits
 
@@ -331,7 +341,6 @@ class RepresentationConvAtariNet(nn.Module):
         x = self.avg_pool_1(x)
         x = self.res_blocks_3(x)
         hidden_state = self.avg_pool_2(x)
-        hidden_state = normalize_hidden_state(hidden_state)
         return hidden_state
 
 
@@ -372,7 +381,6 @@ class RepresentationConvNet(nn.Module):
         """Given raw state x, predict the hidden state."""
         conv_block_out = self.conv_block(x)
         hidden_state = self.res_blocks(conv_block_out)
-        hidden_state = normalize_hidden_state(hidden_state)
         return hidden_state
 
 
@@ -431,7 +439,6 @@ class DynamicsConvNet(nn.Module):
         x = torch.cat([hidden_state, onehot_action], dim=1)
         hidden_state = self.res_blocks(self.conv_block(x))
         reward_logits = self.reward_head(hidden_state)
-        hidden_state = normalize_hidden_state(hidden_state)
         return hidden_state, reward_logits
 
 
@@ -510,10 +517,14 @@ class MuZeroAtariNet(MuZeroNet):  # pylint: disable=abstract-method
         )
 
     def represent(self, x: torch.Tensor) -> torch.Tensor:
-        return self.represent_net(x)
+        hidden_state = self.represent_net(x)
+        hidden_state = normalize_hidden_state(hidden_state)
+        return hidden_state
 
     def dynamics(self, hidden_state: torch.Tensor, action: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        return self.dynamics_net(hidden_state, action)
+        hidden_state, reward_logits = self.dynamics_net(hidden_state, action)
+        hidden_state = normalize_hidden_state(hidden_state)
+        return hidden_state, reward_logits
 
     def prediction(self, hidden_state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.prediction_net(hidden_state)
@@ -541,10 +552,14 @@ class MuZeroBoardGameNet(MuZeroNet):  # pylint: disable=abstract-method
         self.prediction_net = PredictionConvNet(prediction_input_shape, num_actions, num_res_blocks, num_planes, 1)
 
     def represent(self, x: torch.Tensor) -> torch.Tensor:
-        return self.represent_net(x)
+        hidden_state = self.represent_net(x)
+        hidden_state = normalize_hidden_state(hidden_state)
+        return hidden_state
 
     def dynamics(self, hidden_state: torch.Tensor, action: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        return self.dynamics_net(hidden_state, action)
+        hidden_state, reward_logits = self.dynamics_net(hidden_state, action)
+        hidden_state = normalize_hidden_state(hidden_state)
+        return hidden_state, reward_logits
 
     def prediction(self, hidden_state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         return self.prediction_net(hidden_state)

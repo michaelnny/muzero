@@ -1,3 +1,17 @@
+# Copyright 2022 Michael Hu. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
 """MCTS class."""
 
 from __future__ import annotations
@@ -128,20 +142,17 @@ class Node:
             current.W += value if current.player_id == player_id else -value
             current.N += 1
 
-            # Why doing this? Is it necessary??
-            if config.is_board_game:
-                q = current.reward + config.discount * -current.Q
-            else:
-                q = current.reward + config.discount * current.Q
-
-            min_max_stats.update(q)
+            # What's the logic behind this??
+            if current.has_parent:
+                if config.is_board_game:
+                    min_max_stats.update(current.reward + config.discount * -current.Q)
+                else:
+                    min_max_stats.update(current.reward + config.discount * current.Q)
 
             if config.is_board_game and current.player_id == player_id:
-                reward = -current.reward
+                value = -current.reward + config.discount * value
             else:
-                reward = current.reward
-
-            value = reward + config.discount * value
+                value = current.reward + config.discount * value
 
             current = current.parent
 
@@ -158,7 +169,6 @@ class Node:
         p = 1.0
         if config.is_board_game:
             p = -1.0
-
         return np.array(
             [min_max_stats.normalize(child.reward + config.discount * p * child.Q) for child in self.children],
             dtype=np.float32,
@@ -197,6 +207,11 @@ class Node:
     def child_N(self) -> np.ndarray:
         """Returns a 1D numpy.array contains visits count for all child."""
         return np.array([child.N for child in self.children], dtype=np.int32)
+
+    @property
+    def has_parent(self) -> np.ndarray:
+        """Returns a 1D numpy.array contains visits count for all child."""
+        return isinstance(self.parent, Node)
 
 
 def add_dirichlet_noise(prob: np.ndarray, eps: float = 0.25, alpha: float = 0.03):
@@ -379,9 +394,10 @@ def uct_search(
 
     if best_action:
         # Choose the action with most visit number.
-        action = np.argmax(child_visits)
+        action_index = np.argmax(child_visits)
     else:
         # Sample a action.
-        action = np.random.choice(np.arange(pi_prob.shape[0]), p=pi_prob)
+        action_index = np.random.choice(np.arange(pi_prob.shape[0]), p=pi_prob)
 
+    action = root_node.children[action_index].move
     return (action, pi_prob, root_node.Q)

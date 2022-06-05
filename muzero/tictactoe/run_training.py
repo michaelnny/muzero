@@ -1,5 +1,18 @@
+# Copyright 2022 Michael Hu. All Rights Reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ==============================================================================
 """Runs MuZero self-play training pipeline on Tic-Tac-Toe game.
-
 """
 from absl import app
 from absl import flags
@@ -16,7 +29,7 @@ from muzero.pipeline import run_self_play, run_training, run_data_collector, run
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('use_mlp_net', True, 'Use FC MLP network instead Conv2d network, default on.')
-flags.DEFINE_integer('num_actors', 6, 'Number of self-play actor processes.')
+flags.DEFINE_integer('num_actors', 4, 'Number of self-play actor processes.')
 flags.DEFINE_integer('seed', 1, 'Seed the runtime.')
 flags.DEFINE_float('initial_elo', 0.0, 'Initial elo rating, for evaluation agent performance only.')
 flags.DEFINE_string('checkpoint_dir', 'checkpoints/tictactoe', 'Path for checkpoint file.')
