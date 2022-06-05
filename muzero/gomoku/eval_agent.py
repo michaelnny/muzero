@@ -89,7 +89,7 @@ def main(argv):
             min_bound=FLAGS.min_bound,
             max_bound=FLAGS.max_bound,
             competitive=True,
-            best_action=True,
+            deterministic=True,
         )
 
         obs, reward, done, _ = eval_env.step(action)

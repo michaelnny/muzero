@@ -42,6 +42,8 @@ flags.DEFINE_integer('board_size', 9, 'Board size for Gomoku.')
 flags.DEFINE_integer('num_to_win', 5, 'Number in a row to win.')
 flags.DEFINE_integer('stack_history', 4, 'Stack previous states.')
 flags.DEFINE_integer('seed', 1, 'Seed the runtime.')
+flags.DEFINE_bool('use_tensorboard', True, 'Monitor performance with Tensorboard, default on.')
+flags.DEFINE_bool('clip_grad', False, 'Clip gradient, default off.')
 flags.DEFINE_float('initial_elo', 0.0, 'Initial elo rating, for evaluation agent performance only.')
 flags.DEFINE_string('checkpoint_dir', 'checkpoints/gomoku', 'Path for checkpoint file.')
 flags.DEFINE_string(
@@ -82,7 +84,7 @@ def main(argv):
     if FLAGS.tag is not None and FLAGS.tag != '':
         tag = f'{tag}_{FLAGS.tag}'
 
-    config = make_gomoku_config()
+    config = make_gomoku_config(FLAGS.use_tensorboard, FLAGS.clip_grad)
 
     network = MuZeroBoardGameNet(input_shape, num_actions, config.num_res_blocks, config.num_planes)
     optimizer = torch.optim.Adam(network.parameters(), lr=config.lr_init, weight_decay=config.weight_decay)

@@ -35,6 +35,8 @@ flags.DEFINE_string("environment_name", 'CartPole-v1', "Classic problem like 'Ca
 flags.DEFINE_integer("stack_history", 0, "Stack last N states and actions.")
 flags.DEFINE_integer('num_actors', 6, 'Number of self-play actor processes.')
 flags.DEFINE_integer('seed', 1, 'Seed the runtime.')
+flags.DEFINE_bool('use_tensorboard', True, 'Monitor performance with Tensorboard, default on.')
+flags.DEFINE_bool('clip_grad', False, 'Clip gradient, default off.')
 flags.DEFINE_string('checkpoint_dir', 'checkpoints/classic', 'Path for checkpoint file.')
 flags.DEFINE_integer(
     'samples_save_frequency',
@@ -67,7 +69,7 @@ def main(argv):
     if FLAGS.tag is not None and FLAGS.tag != '':
         tag = f'{tag}_{FLAGS.tag}'
 
-    config = make_classic_config()
+    config = make_classic_config(FLAGS.use_tensorboard, FLAGS.clip_grad)
 
     network = MuZeroMLPNet(
         input_shape, num_actions, config.num_planes, config.value_support_size, config.reward_support_size, config.hidden_size

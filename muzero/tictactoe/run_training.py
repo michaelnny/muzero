@@ -29,6 +29,8 @@ from muzero.pipeline import run_self_play, run_training, run_data_collector, run
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('use_mlp_net', True, 'Use FC MLP network instead Conv2d network, default on.')
+flags.DEFINE_bool('use_tensorboard', True, 'Monitor performance with Tensorboard, default on.')
+flags.DEFINE_bool('clip_grad', False, 'Clip gradient, default off.')
 flags.DEFINE_integer('num_actors', 4, 'Number of self-play actor processes.')
 flags.DEFINE_integer('seed', 1, 'Seed the runtime.')
 flags.DEFINE_float('initial_elo', 0.0, 'Initial elo rating, for evaluation agent performance only.')
@@ -59,7 +61,7 @@ def main(argv):
     if FLAGS.tag is not None and FLAGS.tag != '':
         tag = f'{tag}_{FLAGS.tag}'
 
-    config = make_tictactoe_config(FLAGS.use_mlp_net)
+    config = make_tictactoe_config(FLAGS.use_mlp_net, FLAGS.use_tensorboard, FLAGS.clip_grad)
 
     def create_network():
         if FLAGS.use_mlp_net:

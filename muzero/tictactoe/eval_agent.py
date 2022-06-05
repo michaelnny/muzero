@@ -101,7 +101,7 @@ def main(argv):
             actions_mask=eval_env.actions_mask,
             current_player=eval_env.current_player,
             opponent_player=eval_env.opponent_player,
-            best_action=True,
+            deterministic=True,
         )
 
         obs, reward, done, _ = eval_env.step(action)

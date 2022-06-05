@@ -115,7 +115,8 @@ def run_self_play(
             obs = next_obs
 
             # Send samples to learner every 200 steps on Atari games.
-            # Here we accmulate 200 + unroll_steps + td_steps because we want to compute the target and unroll sequences.
+            # Here we accmulate 200 + unroll_steps + td_steps because
+            # we needs these extra sequences to compute the target and unroll sequences.
             seq_length = 200
             if not config.is_board_game and len(episode_trajectory) == seq_length + config.unroll_steps + config.td_steps:
                 # Unpack list of tuples into seperate lists.
@@ -137,7 +138,7 @@ def run_self_play(
                 ):
                     data_queue.put((transition, priority))
 
-                del episode_trajectory[:200]
+                del episode_trajectory[:seq_length]
                 del (observations, actions, rewards, pi_probs, root_values, priorities, player_ids, target_values)
 
         game += 1
@@ -377,7 +378,7 @@ def run_board_game_evaluator(
                 actions_mask=env.actions_mask,
                 current_player=env.current_player,
                 opponent_player=env.opponent_player,
-                best_action=True,
+                deterministic=True,
             )
 
             obs, _, done, _ = env.step(action)
@@ -471,7 +472,7 @@ def run_evaluator(
                     actions_mask=env.actions_mask,
                     current_player=env.current_player,
                     opponent_player=env.opponent_player,
-                    best_action=True,
+                    deterministic=True,
                 )
 
                 obs, reward, done, _ = env.step(action)

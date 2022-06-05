@@ -121,8 +121,8 @@ class Node:
         ucb_results = self.child_Q(min_max_stats, config) + self.child_U(config)
 
         # Break ties when have multiple 'max' value.
-        best_action = np.random.choice(np.where(ucb_results == ucb_results.max())[0])
-        best_child = self.children[best_action]
+        deterministic = np.random.choice(np.where(ucb_results == ucb_results.max())[0])
+        best_child = self.children[deterministic]
 
         return best_child
 
@@ -305,7 +305,7 @@ def uct_search(
     actions_mask: np.ndarray,
     current_player: int,
     opponent_player: int,
-    best_action: bool = False,
+    deterministic: bool = False,
 ) -> Tuple[int, np.ndarray, float]:
     """Single-threaded Upper Confidence Bound (UCB) for Trees (UCT) search without any rollout.
 
@@ -329,10 +329,11 @@ def uct_search(
         config: a MuZeroConfig instance.
         temperature: a parameter controls the level of exploration
             when generate policy action probabilities after MCTS search.
-        actions_mask: a 1D bool numpy.array contains valid action masks, with True for valid, False for invalid actions.
-        current_player: current player in the environment.
-        opponent_player: opponent player in the environment.
-        best_action: choose the node with most visits number instead of sample through a probability distribution, default off.
+        actions_mask: a 1D bool numpy.array contains valid action masks, with True for valid actions, False for invalid actions.
+        current_player: current player id in the environment.
+        opponent_player: opponent player id in the environment.
+        deterministic: after the MCTS search, choose the child node with most visits number to play in the real environment,
+         instead of sample through a probability distribution, default off.
 
     Returns:
         tuple contains:
@@ -354,7 +355,7 @@ def uct_search(
     root_node = Node(prior=0.0)
 
     # Add dirichlet noise to the prior probabilities to root node.
-    if config.root_dirichlet_alpha > 0.0 and config.root_exploration_eps > 0.0:
+    if not deterministic and config.root_dirichlet_alpha > 0.0 and config.root_exploration_eps > 0.0:
         prior_prob = add_dirichlet_noise(prior_prob, eps=config.root_exploration_eps, alpha=config.root_dirichlet_alpha)
     # Set prior probabilities to zero for illegal actions.
     if actions_mask is not None:
@@ -376,7 +377,7 @@ def uct_search(
 
         # Phase 2 - Expand and evaluation
         hidden_state = torch.from_numpy(node.parent.hidden_state).to(device=device, dtype=torch.float32)
-        action = torch.tensor(node.move, dtype=torch.long, device=device).unsqueeze(0)
+        action = torch.tensor([node.move], dtype=torch.long, device=device)
         network_out = network.recurrent_inference(hidden_state[None, ...], action[None, ...])
 
         node.expand(prior_prob, curr_player, network_out.hidden_state, network_out.reward)
@@ -392,7 +393,7 @@ def uct_search(
 
     pi_prob = generate_play_policy(child_visits, temperature)
 
-    if best_action:
+    if deterministic:
         # Choose the action with most visit number.
         action_index = np.argmax(child_visits)
     else:

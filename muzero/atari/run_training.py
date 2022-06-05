@@ -38,6 +38,8 @@ flags.DEFINE_bool("gray_scale", True, "Gray scale observation image.")
 flags.DEFINE_integer('num_actors', 6, 'Number of self-play actor processes.')
 
 flags.DEFINE_integer('seed', 1, 'Seed the runtime.')
+flags.DEFINE_bool('use_tensorboard', True, 'Monitor performance with Tensorboard, default on.')
+flags.DEFINE_bool('clip_grad', False, 'Clip gradient, default off.')
 
 flags.DEFINE_string('checkpoint_dir', 'checkpoints/atari', 'Path for checkpoint file.')
 flags.DEFINE_string(
@@ -84,7 +86,7 @@ def main(argv):
     if FLAGS.tag is not None and FLAGS.tag != '':
         tag = f'{tag}_{FLAGS.tag}'
 
-    config = make_atari_config()
+    config = make_atari_config(FLAGS.use_tensorboard, FLAGS.clip_grad)
 
     network = MuZeroAtariNet(
         input_shape,

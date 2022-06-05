@@ -59,6 +59,13 @@ python3 -m muzero.gomoku.run_training
 ```
 
 
+## Monitoring performance and statistics with Tensorboard
+
+```
+tensorboard --logdir=runs
+```
+
+
 ### Evaluate agents
 Note for board games with two players, the evaluation will run in `MuZero vs. MuZero` mode.
 
