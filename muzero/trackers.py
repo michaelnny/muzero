@@ -59,6 +59,7 @@ class TensorboardEpisodTracker:
             self._episode_returns.append(sum(self._current_episode_rewards))
             self._episode_steps.append(self._current_episode_step)
             self._current_episode_rewards = []
+            self._current_episode_root_values = []
             self._current_episode_step = 0
 
             # To improve performance, only logging at end of an episode.
@@ -105,20 +106,16 @@ class TensorboardLearnerTracker:
         self._num_steps_since_reset = 0
         self._start = timeit.default_timer()
 
-    def step(self, loss, lr) -> None:
+    def step(self, loss, lr, train_steps) -> None:
         """Log training loss statistics."""
-        self._num_steps_since_reset += 1
+        self._num_steps_since_reset = train_steps
 
-        # To improve performance, log per 100 train steps.
-        if self._num_steps_since_reset % 100 == 0:
+        self._writer.add_scalar('learner(train_steps)/loss', loss, train_steps)
+        self._writer.add_scalar('learner(train_steps)/learning_rate', lr, train_steps)
 
-            tb_steps = self._num_steps_since_reset
-            self._writer.add_scalar('learner(train_steps)/loss', loss, tb_steps)
-            self._writer.add_scalar('learner(train_steps)/learning_rate', lr, tb_steps)
-
-            time_stats = self.get_time_stat()
-            self._writer.add_scalar('learner(train_steps)/step_rate(minutes)', time_stats['step_rate'] / 60, tb_steps)
-            self._writer.add_scalar('learner(train_steps)/run_duration(minutes)', time_stats['duration'] / 60, tb_steps)
+        time_stats = self.get_time_stat()
+        self._writer.add_scalar('learner(train_steps)/step_rate(minutes)', time_stats['step_rate'] * 60, train_steps)
+        self._writer.add_scalar('learner(train_steps)/run_duration(minutes)', time_stats['duration'] / 60, train_steps)
 
     def get_time_stat(self) -> Mapping[Text, float]:
         """Returns statistics as a dictionary."""

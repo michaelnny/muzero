@@ -66,7 +66,7 @@ class PrioritizedReplay(Generic[ReplayStructure]):
         """Adds single item to replay."""
         if not 0.0 < priority:
             # raise RuntimeError(f'Expect priority to be greater than 0, got {priority}')
-            priority = 1e-8  # Avoid NaNs
+            priority = 1e-4  # Avoid NaNs
 
         index = self._num_added % self._capacity
         self._storage[index] = encoder(item)
@@ -83,13 +83,14 @@ class PrioritizedReplay(Generic[ReplayStructure]):
             raise RuntimeError(f'Replay only have {self.size} samples, got sample batch size {batch_size}')
 
         if self._priority_exponent == 0:
-            # indices = self._random_state.randint(self.size, size=batch_size)
-            indices = np.random.randint(0, self.size, size=batch_size).astype(np.int64)
+            indices = np.random.uniform(0, self.size, size=batch_size).astype(np.int64)
             weights = np.ones_like(indices, dtype=np.float32)
         else:
-            priorities = (self._priorities[: self.size]) ** self._priority_exponent
-            # priorities = np.clip(priorities, a_min=1e-8, a_max=1e8)  # Avoid probabilities contain NaN
+            priorities = self._priorities[: self.size]
+            priorities = np.nan_to_num(priorities, nan=1e-4)  # Avoid NaN
+            priorities = priorities**self._priority_exponent
             probs = priorities / np.sum(priorities)
+
             indices = np.random.choice(np.arange(probs.shape[0]), size=batch_size, replace=True, p=probs)
 
             # Importance weights.
@@ -107,7 +108,7 @@ class PrioritizedReplay(Generic[ReplayStructure]):
         for i, p in zip(indices, priorities):
             if p <= 0.0:
                 # raise RuntimeError(f'Expect priority to be greater than 0, got {p}')
-                p = 1e-8  # Avoid NaNs
+                p = 1e-4  # Avoid NaNs
             self._priorities[i] = p
 
     @property

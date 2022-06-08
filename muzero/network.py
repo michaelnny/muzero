@@ -179,7 +179,6 @@ class DynamicsMLPNet(nn.Module):
 
         hidden_state = self.transition_net(x)
         reward_logits = self.reward_net(hidden_state)
-
         return hidden_state, reward_logits
 
 

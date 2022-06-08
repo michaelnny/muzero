@@ -28,7 +28,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from muzero.core import MuZeroConfig
+from muzero.config import MuZeroConfig
 from muzero.games.env import BoardGameEnv
 from muzero.network import MuZeroNet
 from muzero.replay import Transition, PrioritizedReplay
@@ -114,13 +114,15 @@ def run_self_play(
 
             obs = next_obs
 
-            # Send samples to learner every 200 steps on Atari games.
-            # Here we accmulate 200 + unroll_steps + td_steps because
+            # Send samples to learner every N steps on Atari games.
+            # Here we accmulate N + unroll_steps + td_steps because
             # we needs these extra sequences to compute the target and unroll sequences.
-            seq_length = 200
-            if not config.is_board_game and len(episode_trajectory) == seq_length + config.unroll_steps + config.td_steps:
+            if (
+                not config.is_board_game
+                and len(episode_trajectory) == config.seq_length + config.unroll_steps + config.td_steps
+            ):
                 # Unpack list of tuples into seperate lists.
-                observations, actions, rewards, pi_probs, root_values, player_ids = map(list, zip(*episode_trajectory))
+                observations, actions, rewards, pi_probs, root_values, search_values, _ = map(list, zip(*episode_trajectory))
                 # Compute n_step target value.
                 target_values = compute_n_step_target(rewards, root_values, config.td_steps, config.discount)
 
@@ -128,18 +130,18 @@ def run_self_play(
 
                 # Make unroll sequences and send to learner.
                 for transition, priority in make_unroll_sequence(
-                    observations[:seq_length],
-                    actions[: seq_length + config.unroll_steps],
-                    rewards[: seq_length + config.unroll_steps],
-                    pi_probs[: seq_length + config.unroll_steps],
-                    target_values[: seq_length + config.unroll_steps],
-                    priorities[: seq_length + config.unroll_steps],
+                    observations[: config.seq_length],
+                    actions[: config.seq_length + config.unroll_steps],
+                    rewards[: config.seq_length + config.unroll_steps],
+                    pi_probs[: config.seq_length + config.unroll_steps],
+                    target_values[: config.seq_length + config.unroll_steps],
+                    priorities[: config.seq_length + config.unroll_steps],
                     config.unroll_steps,
                 ):
                     data_queue.put((transition, priority))
 
-                del episode_trajectory[:seq_length]
-                del (observations, actions, rewards, pi_probs, root_values, priorities, player_ids, target_values)
+                del episode_trajectory[: config.seq_length]
+                del (observations, actions, rewards, pi_probs, root_values, search_values, priorities, target_values)
 
         game += 1
         if game % 1000 == 0:
@@ -258,9 +260,6 @@ def run_training(  # noqa: C901
 
         train_steps_counter.value += 1
 
-        for tracker in trackers:
-            tracker.step(loss.detach().cpu().item(), lr_scheduler.get_last_lr()[0])
-
         del transitions, indices, weights
 
         if train_steps_counter.value > 1 and train_steps_counter.value % config.checkpoint_interval == 0:
@@ -274,6 +273,9 @@ def run_training(  # noqa: C901
             actor_network.eval()
 
             del state_to_save
+
+            for tracker in trackers:
+                tracker.step(loss.detach().cpu().item(), lr_scheduler.get_last_lr()[0], train_steps_counter.value)
 
         # Wait for sometime before start training on next batch.
         if config.train_delay is not None and config.train_delay > 0 and train_steps_counter.value > 1:
@@ -564,7 +566,7 @@ def calc_loss(network: MuZeroNet, device: torch.device, transitions: Transition,
     reward_loss, value_loss, policy_loss = (0, 0, 0)
     loss_scale = 1.0 / T
 
-    priorities = np.zeros((B,))
+    pred_values = []
 
     # Get initial hidden state.
     hidden_state = network.represent(state)
@@ -583,14 +585,7 @@ def calc_loss(network: MuZeroNet, device: torch.device, transitions: Transition,
         # Scale the gradient for dynamics function by 0.5.
         hidden_state.register_hook(lambda grad: grad * 0.5)
 
-        if t == 0:
-            with torch.no_grad():
-                # Using the delta between predicted value and target value (for the initial hidden state) as priorities.
-                if network.mse_loss_for_value:
-                    pred_value_scalar = pred_value.squeeze(1)
-                else:
-                    pred_value_scalar = logits_to_transformed_expected_value(pred_value, network.value_support_size).squeeze(1)
-                priorities = torch.abs(pred_value_scalar.detach() - target_value_scalar[:, t]).cpu().numpy()
+        pred_values.append(pred_value.detach())
 
     reward_loss = torch.mean(reward_loss * weights.detach())
     value_loss = torch.mean(value_loss * weights.detach())
@@ -600,6 +595,15 @@ def calc_loss(network: MuZeroNet, device: torch.device, transitions: Transition,
 
     # Scale the loss by 1/unroll_step.
     loss.register_hook(lambda grad: grad * loss_scale)
+
+    # Using the delta between predicted values and target values as priorities.
+    pred_values = torch.stack(pred_values, dim=1)
+    with torch.no_grad():
+        if network.mse_loss_for_value:
+            pred_values_scalar = pred_values.squeeze(1)
+        else:
+            pred_values_scalar = logits_to_transformed_expected_value(pred_values, network.value_support_size).squeeze(-1)
+        priorities = torch.abs(pred_values_scalar - target_value_scalar).mean(1).cpu().numpy()
 
     return loss, priorities
 
@@ -617,8 +621,8 @@ def loss_func(prediction: torch.Tensor, target: torch.Tensor, mse: bool = False)
         return F.mse_loss(prediction, target, reduction='none')
 
     # [B]
-    return torch.sum(-target * F.log_softmax(prediction, dim=1), dim=1)
-    # return F.cross_entropy(prediction, target, reduction='none')
+    # return torch.sum(-target * F.log_softmax(prediction, dim=1), dim=1)
+    return F.cross_entropy(prediction, target, reduction='none')
 
 
 def scale_gradient(x: torch.Tensor, scale: float) -> torch.Tensor:

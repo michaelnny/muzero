@@ -24,22 +24,22 @@ from torch.optim.lr_scheduler import MultiStepLR
 
 from muzero.network import MuZeroAtariNet
 from muzero.replay import PrioritizedReplay
-from muzero.core import make_atari_config
+from muzero.config import make_atari_config
 from muzero.gym_env import create_atari_environment
-from muzero.pipeline import run_self_play, run_training, run_data_collector, load_checkpoint, load_from_file
+from muzero.pipeline import run_self_play, run_training, run_data_collector, run_evaluator, load_checkpoint, load_from_file
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string("environment_name", 'BreakoutNoFrameskip-v4', "Classic problem like Breakout, Pong")
+flags.DEFINE_string("environment_name", 'PongNoFrameskip-v4', "Classic problem like Breakout, Pong")
 flags.DEFINE_integer('screen_size', 84, 'Environment frame screen height.')
 flags.DEFINE_integer("stack_history", 4, "Stack previous states.")
 flags.DEFINE_integer("frame_skip", 4, "Skip n frames.")
 flags.DEFINE_bool("gray_scale", True, "Gray scale observation image.")
 
-flags.DEFINE_integer('num_actors', 6, 'Number of self-play actor processes.')
+flags.DEFINE_integer('num_actors', 4, 'Number of self-play actor processes.')
 
 flags.DEFINE_integer('seed', 1, 'Seed the runtime.')
 flags.DEFINE_bool('use_tensorboard', True, 'Monitor performance with Tensorboard, default on.')
-flags.DEFINE_bool('clip_grad', False, 'Clip gradient, default off.')
+flags.DEFINE_bool('clip_grad', True, 'Clip gradient, default off.')
 
 flags.DEFINE_string('checkpoint_dir', 'checkpoints/atari', 'Path for checkpoint file.')
 flags.DEFINE_string(
@@ -62,10 +62,7 @@ def main(argv):
     """Trains MuZero agent on Atari games."""
     del argv
 
-    device = 'cpu'
-    if torch.cuda.is_available():
-        device = 'cuda'
-    runtime_device = torch.device(device)
+    runtime_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     self_play_envs = [
         create_atari_environment(
@@ -74,10 +71,21 @@ def main(argv):
             FLAGS.stack_history,
             FLAGS.frame_skip,
             FLAGS.screen_size,
+            done_on_life_loss=True,
             grayscale=FLAGS.gray_scale,
         )
         for i in range(FLAGS.num_actors)
     ]
+
+    eval_env = create_atari_environment(
+        FLAGS.environment_name,
+        FLAGS.seed + 2,
+        FLAGS.stack_history,
+        FLAGS.frame_skip,
+        FLAGS.screen_size,
+        done_on_life_loss=True,
+        grayscale=FLAGS.gray_scale,
+    )
 
     input_shape = self_play_envs[0].observation_space.shape
     num_actions = self_play_envs[0].action_space.n
@@ -108,6 +116,14 @@ def main(argv):
         config.reward_support_size,
     )
     actor_network.share_memory()
+    new_ckpt_network = MuZeroAtariNet(
+        input_shape,
+        num_actions,
+        config.num_res_blocks,
+        config.num_planes,
+        config.value_support_size,
+        config.reward_support_size,
+    )
 
     replay = PrioritizedReplay(config.replay_capacity, config.priority_exponent, config.importance_sampling_exponent)
 
@@ -173,6 +189,22 @@ def main(argv):
     )
     learner.start()
 
+    # Start evaluation loop on a seperate process.
+    evaluator = multiprocessing.Process(
+        target=run_evaluator,
+        args=(
+            config,
+            new_ckpt_network,
+            runtime_device,
+            eval_env,
+            0.0,
+            checkpoint_files,
+            stop_event,
+            tag,
+        ),
+    )
+    evaluator.start()
+
     # # Start self-play processes.
     actors = []
     for i in range(FLAGS.num_actors):
@@ -199,6 +231,7 @@ def main(argv):
 
     learner.join()
     data_collector.join()
+    evaluator.join()
 
 
 if __name__ == '__main__':

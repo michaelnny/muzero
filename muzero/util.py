@@ -31,7 +31,7 @@ def normalize_hidden_state(x: torch.Tensor) -> torch.Tensor:
     """Normalize hidden state to the range [0, 1]"""
     _min = x.min(dim=1, keepdim=True)[0]
     _max = x.max(dim=1, keepdim=True)[0]
-    normalized = (x - _min) / (_max - _min)
+    normalized = (x - _min) / (_max - _min + 1e-8)
     return normalized
 
 
@@ -86,7 +86,7 @@ def logits_to_transformed_expected_value(logits: torch.Tensor, support_size: int
 def scalar_to_categorical_probabilities(x: torch.Tensor, support_size: int) -> torch.Tensor:
     """
     Given scalar value (could be either reward or state value), do the following operations:
-        - apply inverse of `signed_hyperbolic`
+        - apply `signed_hyperbolic` transform function, which is inverse of `signed_parabolic`
         - project the values onto support base according to the MuZero paper.
 
     Args:

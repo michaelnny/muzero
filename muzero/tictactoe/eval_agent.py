@@ -23,7 +23,7 @@ from muzero.games.tictactoe import TicTacToeEnv
 from muzero.network import MuZeroMLPNet, MuZeroBoardGameNet
 from muzero.pipeline import load_checkpoint
 from muzero.mcts import uct_search
-from muzero.core import make_tictactoe_config
+from muzero.config import make_tictactoe_config
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('use_mlp_net', True, 'Use FC MLP network instead Conv2d network, default on.')
@@ -45,10 +45,7 @@ def main(argv):
     """Evaluates MuZero agent on Tic-Tac-Toe game."""
     del argv
 
-    device = 'cpu'
-    if torch.cuda.is_available():
-        device = 'cuda'
-    runtime_device = torch.device(device)
+    runtime_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     eval_env = TicTacToeEnv()
     input_shape = eval_env.observation_space.shape
@@ -97,7 +94,7 @@ def main(argv):
             network=network,
             device=runtime_device,
             config=config,
-            temperature=0.0,
+            temperature=0.1,
             actions_mask=eval_env.actions_mask,
             current_player=eval_env.current_player,
             opponent_player=eval_env.opponent_player,

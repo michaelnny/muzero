@@ -24,7 +24,7 @@ from torch.optim.lr_scheduler import MultiStepLR
 from muzero.games.tictactoe import TicTacToeEnv
 from muzero.network import MuZeroMLPNet, MuZeroBoardGameNet
 from muzero.replay import PrioritizedReplay
-from muzero.core import make_tictactoe_config
+from muzero.config import make_tictactoe_config
 from muzero.pipeline import run_self_play, run_training, run_data_collector, run_board_game_evaluator
 
 FLAGS = flags.FLAGS
@@ -46,10 +46,7 @@ def main(argv):
     """Trains MuZero agent on Tic-Tac-Toe game."""
     del argv
 
-    device = 'cpu'
-    if torch.cuda.is_available():
-        device = 'cuda'
-    runtime_device = torch.device(device)
+    runtime_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     self_play_envs = [TicTacToeEnv() for i in range(FLAGS.num_actors)]
     eval_env = TicTacToeEnv()

@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ==============================================================================
-"""Runs MuZero self-play training pipeline on free-style Gomoku game.
-"""
+"""Runs MuZero self-play training pipeline on RAM version of Atari game."""
 from absl import app
 from absl import flags
 from absl import logging
@@ -23,29 +22,24 @@ import threading
 import torch
 from torch.optim.lr_scheduler import MultiStepLR
 
-from muzero.games.gomoku import GomokuEnv
-from muzero.network import MuZeroBoardGameNet
+from muzero.network import MuZeroMLPNet
 from muzero.replay import PrioritizedReplay
-from muzero.config import make_gomoku_config
-from muzero.pipeline import (
-    run_self_play,
-    run_training,
-    run_data_collector,
-    run_board_game_evaluator,
-    load_checkpoint,
-    load_from_file,
-)
-
+from muzero.config import make_atari_ram_config
+from muzero.gym_env import create_atari_ram_environment
+from muzero.pipeline import run_self_play, run_training, run_data_collector, run_evaluator, load_checkpoint, load_from_file
 
 FLAGS = flags.FLAGS
-flags.DEFINE_integer('board_size', 9, 'Board size for Gomoku.')
-flags.DEFINE_integer('num_to_win', 5, 'Number in a row to win.')
-flags.DEFINE_integer('stack_history', 4, 'Stack previous states.')
+flags.DEFINE_string("environment_name", 'Breakout-ramNoFrameskip-v4', "Classic problem like Breakout, Pong")
+flags.DEFINE_integer("stack_history", 4, "Stack previous states.")
+flags.DEFINE_integer("frame_skip", 4, "Skip n frames.")
+
+flags.DEFINE_integer('num_actors', 4, 'Number of self-play actor processes.')
+
 flags.DEFINE_integer('seed', 1, 'Seed the runtime.')
 flags.DEFINE_bool('use_tensorboard', True, 'Monitor performance with Tensorboard, default on.')
-flags.DEFINE_bool('clip_grad', False, 'Clip gradient, default off.')
-flags.DEFINE_float('initial_elo', 0.0, 'Initial elo rating, for evaluation agent performance only.')
-flags.DEFINE_string('checkpoint_dir', 'checkpoints/gomoku', 'Path for checkpoint file.')
+flags.DEFINE_bool('clip_grad', True, 'Clip gradient, default off.')
+
+flags.DEFINE_string('checkpoint_dir', 'checkpoints/atari', 'Path for checkpoint file.')
 flags.DEFINE_string(
     'load_checkpoint_file',
     '',
@@ -54,45 +48,61 @@ flags.DEFINE_string(
 
 flags.DEFINE_integer(
     'samples_save_frequency',
-    10000,
-    'The frequency (measured in number added in replay) to save self-play samples in replay.',
+    -1,
+    'The frequency (measured in number added in replay) to save self-play samples in replay, default -1 do not save.',
 )
-flags.DEFINE_string('samples_save_dir', 'samples/gomoku', 'Path for save self-play samples in replay to file.')
+flags.DEFINE_string('samples_save_dir', 'samples/atari', 'Path for save self-play samples in replay to file.')
 flags.DEFINE_string('load_samples_file', '', 'Load the replay samples from file.')
 flags.DEFINE_string('tag', '', 'Add tag to Tensorboard log file.')
 
 
 def main(argv):
-    """Trains MuZero agent on Gomoku board game."""
+    """Trains MuZero agent on Atari games."""
     del argv
 
     runtime_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     self_play_envs = [
-        GomokuEnv(board_size=FLAGS.board_size, num_to_win=FLAGS.num_to_win, stack_history=FLAGS.stack_history)
+        create_atari_ram_environment(
+            FLAGS.environment_name,
+            FLAGS.seed + i**2,
+            FLAGS.stack_history,
+            FLAGS.frame_skip,
+            done_on_life_loss=True,
+        )
         for i in range(FLAGS.num_actors)
     ]
-    eval_env = GomokuEnv(board_size=FLAGS.board_size, num_to_win=FLAGS.num_to_win, stack_history=FLAGS.stack_history)
+
+    eval_env = create_atari_ram_environment(
+        FLAGS.environment_name,
+        FLAGS.seed + 2,
+        FLAGS.stack_history,
+        FLAGS.frame_skip,
+        done_on_life_loss=True,
+    )
 
     input_shape = self_play_envs[0].observation_space.shape
     num_actions = self_play_envs[0].action_space.n
 
-    tag = 'Gomoku'
+    tag = self_play_envs[0].spec.id
     if FLAGS.tag is not None and FLAGS.tag != '':
         tag = f'{tag}_{FLAGS.tag}'
 
-    config = make_gomoku_config(FLAGS.use_tensorboard, FLAGS.clip_grad)
+    config = make_atari_ram_config(FLAGS.use_tensorboard, FLAGS.clip_grad)
 
-    network = MuZeroBoardGameNet(input_shape, num_actions, config.num_res_blocks, config.num_planes)
+    network = MuZeroMLPNet(
+        input_shape, num_actions, config.num_planes, config.value_support_size, config.reward_support_size, config.hidden_size
+    )
     optimizer = torch.optim.Adam(network.parameters(), lr=config.lr_init, weight_decay=config.weight_decay)
     lr_scheduler = MultiStepLR(optimizer, milestones=config.lr_milestones, gamma=config.lr_decay_rate)
 
-    actor_network = MuZeroBoardGameNet(input_shape, num_actions, config.num_res_blocks, config.num_planes)
+    actor_network = MuZeroMLPNet(
+        input_shape, num_actions, config.num_planes, config.value_support_size, config.reward_support_size, config.hidden_size
+    )
     actor_network.share_memory()
-
-    # For evaluation only.
-    old_ckpt_network = MuZeroBoardGameNet(input_shape, num_actions, config.num_res_blocks, config.num_planes)
-    new_ckpt_network = MuZeroBoardGameNet(input_shape, num_actions, config.num_res_blocks, config.num_planes)
+    new_ckpt_network = MuZeroMLPNet(
+        input_shape, num_actions, config.num_planes, config.value_support_size, config.reward_support_size, config.hidden_size
+    )
 
     replay = PrioritizedReplay(config.replay_capacity, config.priority_exponent, config.importance_sampling_exponent)
 
@@ -116,7 +126,6 @@ def main(argv):
         train_steps_counter.value = loaded_state['train_steps']
 
         actor_network.load_state_dict(loaded_state['network'])
-        old_ckpt_network.load_state_dict(loaded_state['network'])
 
         logging.info(f'Loaded state from checkpoint {FLAGS.load_checkpoint_file}')
         logging.info(f'Current state: train steps {train_steps_counter.value}, learing rate {lr_scheduler.get_last_lr()}')
@@ -161,17 +170,15 @@ def main(argv):
 
     # Start evaluation loop on a seperate process.
     evaluator = multiprocessing.Process(
-        target=run_board_game_evaluator,
+        target=run_evaluator,
         args=(
             config,
-            old_ckpt_network,
             new_ckpt_network,
             runtime_device,
             eval_env,
             0.0,
             checkpoint_files,
             stop_event,
-            FLAGS.initial_elo,
             tag,
         ),
     )

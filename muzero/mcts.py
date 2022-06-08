@@ -24,7 +24,7 @@ import numpy as np
 import torch
 
 from muzero.network import MuZeroNet
-from muzero.core import MuZeroConfig, KnownBounds
+from muzero.config import MuZeroConfig, KnownBounds
 
 
 MAXIMUM_FLOAT_VALUE = float('inf')
@@ -121,8 +121,8 @@ class Node:
         ucb_results = self.child_Q(min_max_stats, config) + self.child_U(config)
 
         # Break ties when have multiple 'max' value.
-        deterministic = np.random.choice(np.where(ucb_results == ucb_results.max())[0])
-        best_child = self.children[deterministic]
+        action_index = np.random.choice(np.where(ucb_results == ucb_results.max())[0])
+        best_child = self.children[action_index]
 
         return best_child
 
@@ -170,7 +170,10 @@ class Node:
         if config.is_board_game:
             p = -1.0
         return np.array(
-            [min_max_stats.normalize(child.reward + config.discount * p * child.Q) for child in self.children],
+            [
+                min_max_stats.normalize(child.reward + config.discount * p * child.Q) if child.N > 0 else 0
+                for child in self.children
+            ],
             dtype=np.float32,
         )
 
@@ -350,8 +353,8 @@ def uct_search(
 
     # Create root node
     state = torch.from_numpy(state).to(device=device, dtype=torch.float32)
-    network_out = network.initial_inference(state[None, ...])
-    prior_prob = network_out.pi_probs
+    network_output = network.initial_inference(state[None, ...])
+    prior_prob, root_value = network_output.pi_probs, network_output.value
     root_node = Node(prior=0.0)
 
     # Add dirichlet noise to the prior probabilities to root node.
@@ -361,7 +364,7 @@ def uct_search(
     if actions_mask is not None:
         prior_prob = set_illegal_action_probs_to_zero(actions_mask, prior_prob)
 
-    root_node.expand(prior_prob, current_player, network_out.hidden_state, network_out.reward)
+    root_node.expand(prior_prob, current_player, network_output.hidden_state, network_output.reward)
 
     for _ in range(config.num_simulations):
         # Phase 1 - Select
@@ -378,12 +381,12 @@ def uct_search(
         # Phase 2 - Expand and evaluation
         hidden_state = torch.from_numpy(node.parent.hidden_state).to(device=device, dtype=torch.float32)
         action = torch.tensor([node.move], dtype=torch.long, device=device)
-        network_out = network.recurrent_inference(hidden_state[None, ...], action[None, ...])
+        network_output = network.recurrent_inference(hidden_state[None, ...], action[None, ...])
 
-        node.expand(prior_prob, curr_player, network_out.hidden_state, network_out.reward)
+        node.expand(prior_prob, curr_player, network_output.hidden_state, network_output.reward)
 
         # Phase 3 - Backup on leaf node
-        node.backup(network_out.value, curr_player, min_max_stats, config)
+        node.backup(network_output.value, curr_player, min_max_stats, config)
 
     # Play - generate action probability from the root node.
     child_visits = root_node.child_N
@@ -401,4 +404,4 @@ def uct_search(
         action_index = np.random.choice(np.arange(pi_prob.shape[0]), p=pi_prob)
 
     action = root_node.children[action_index].move
-    return (action, pi_prob, root_node.Q)
+    return (action, pi_prob, root_value)

@@ -16,13 +16,14 @@ from absl import app
 from absl import flags
 from absl import logging
 import os
+from pathlib import Path
 import gym
 import torch
 
 from muzero.network import MuZeroAtariNet
 from muzero.pipeline import load_checkpoint
 from muzero.mcts import uct_search
-from muzero.core import make_atari_config
+from muzero.config import make_atari_config
 from muzero.gym_env import create_atari_environment
 
 FLAGS = flags.FLAGS
@@ -46,10 +47,7 @@ def main(argv):
     """Evaluates MuZero agent on Atari games."""
     del argv
 
-    device = 'cpu'
-    if torch.cuda.is_available():
-        device = 'cuda'
-    runtime_device = torch.device(device)
+    runtime_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     eval_env = create_atari_environment(
         FLAGS.environment_name,
@@ -81,8 +79,12 @@ def main(argv):
 
     network.eval()
 
-    if FLAGS.record_video_dir is not None and os.path.isdir(FLAGS.record_video_dir):
-        eval_env = gym.wrappers.RecordVideo(eval_env, FLAGS.record_video_dir)
+    if FLAGS.record_video_dir is not None and FLAGS.record_video_dir != '':
+        full_path = f"{FLAGS.record_video_dir}_{eval_env.spec.id}"
+        path = Path(full_path)
+        if not path.exists():
+            path.mkdir(parents=True, exist_ok=True)
+        eval_env = gym.wrappers.RecordVideo(eval_env, full_path)
 
     steps = 0
     returns = 0.0

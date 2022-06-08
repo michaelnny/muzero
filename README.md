@@ -15,20 +15,22 @@
 * each directory `atari`, `classic`, `gomoku`, `tictactoe` contains the following modules:
   - `run_training.py` trains the agent for a specific game/control problem.
   - `eval_agent.py` evaluate the trained agent by loading from checkpoint.
-* `core.py` contains the MuZero configuration for different game/control problem.
+* `config.py` contains the MuZero configuration for different game/control problem.
 * `games` directory contains the custom Gomoku and Tic-Tac-Toe board game env implemented with openAI Gym.
+* `gym_env.py` contains openAI Gym wrappers for both Atari and classic control problem.
 * `mcts.py` contains the MCTS node and UCT tree-search algorithm.
 * `pipeline.py` contains the functions to run self-play, training, and evaluation loops.
+* `util.py` contains the functions for value and reward target transform and rescaling.
 * `trackers.py` contains the functions to monitoring traning progress using Tensorboard.
 
 
 ## Note
-* Only tested on classic control problems and Tic-Tac-Toe
-* It does not converge on LunarLander.
+* Only tested on classic control problems and Tic-Tac-Toe.
+* We use uniform random replay as prioritized replay failed to converge on some games.
 
 
 ## Quick start
-### Install required packages
+### Install required packages on Mac
 ```
 # install homebrew, skip this step if already installed
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -36,6 +38,27 @@
 # upgrade pip
 python3 -m pip install --upgrade pip setuptools
 
+# install ffmpeg for recording agent self-play
+brew install ffmpeg
+
+# install snappy for compress numpy.array on M1 mac
+brew install snappy
+CPPFLAGS="-I/opt/homebrew/include -L/opt/homebrew/lib" pip3 install python-snappy
+
+pip3 install -r requirements.txt
+```
+
+
+### Install required packages on Ubuntu Linux
+```
+# install swig which is required for box-2d
+sudo apt install swig
+
+# install ffmpeg for recording agent self-play
+sudo apt-get install ffmpeg
+
+# upgrade pip
+python3 -m pip install --upgrade pip setuptools
 
 pip3 install -r requirements.txt
 ```
