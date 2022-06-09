@@ -125,12 +125,12 @@ class MuZeroNet(nn.Module):
 class RepresentationMLPNet(nn.Module):
     """Representation function with MLP NN for classic games."""
 
-    def __init__(self, input_size: int, num_planes: int, hidden_size: int) -> None:
+    def __init__(self, input_size: int, num_planes: int, hidden_dim: int) -> None:
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(input_size, num_planes),
             nn.ReLU(),
-            nn.Linear(num_planes, hidden_size),
+            nn.Linear(num_planes, hidden_dim),
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -148,20 +148,20 @@ class DynamicsMLPNet(nn.Module):
         self,
         num_actions: int,
         num_planes: int,
-        hidden_size: int,
+        hidden_dim: int,
         support_size: int,
     ) -> None:
         super().__init__()
         self.num_actions = num_actions
 
         self.transition_net = nn.Sequential(
-            nn.Linear(hidden_size + num_actions, num_planes),
+            nn.Linear(hidden_dim + num_actions, num_planes),
             nn.ReLU(),
-            nn.Linear(num_planes, hidden_size),
+            nn.Linear(num_planes, hidden_dim),
         )
 
         self.reward_net = nn.Sequential(
-            nn.Linear(hidden_size, num_planes),
+            nn.Linear(hidden_dim, num_planes),
             nn.ReLU(),
             nn.Linear(num_planes, support_size),
         )
@@ -189,19 +189,19 @@ class PredictionMLPNet(nn.Module):
         self,
         num_actions: int,
         num_planes: int,
-        hidden_size: int,
+        hidden_dim: int,
         support_size: int,
     ) -> None:
         super().__init__()
 
         self.policy_net = nn.Sequential(
-            nn.Linear(hidden_size, num_planes),
+            nn.Linear(hidden_dim, num_planes),
             nn.ReLU(),
             nn.Linear(num_planes, num_actions),
         )
 
         self.value_net = nn.Sequential(
-            nn.Linear(hidden_size, num_planes),
+            nn.Linear(hidden_dim, num_planes),
             nn.ReLU(),
             nn.Linear(num_planes, support_size),
         )
@@ -228,15 +228,15 @@ class MuZeroMLPNet(MuZeroNet):  # pylint: disable=abstract-method
         num_planes: int = 256,
         value_support_size: int = 31,
         reward_support_size: int = 31,
-        hidden_size: int = 64,
+        hidden_dim: int = 64,
     ) -> None:
         super().__init__(num_actions, value_support_size, reward_support_size)
 
-        self.represent_net = RepresentationMLPNet(math.prod(input_shape), num_planes, hidden_size)
+        self.represent_net = RepresentationMLPNet(math.prod(input_shape), num_planes, hidden_dim)
 
-        self.dynamics_net = DynamicsMLPNet(num_actions, num_planes, hidden_size, reward_support_size)
+        self.dynamics_net = DynamicsMLPNet(num_actions, num_planes, hidden_dim, reward_support_size)
 
-        self.prediction_net = PredictionMLPNet(num_actions, num_planes, hidden_size, value_support_size)
+        self.prediction_net = PredictionMLPNet(num_actions, num_planes, hidden_dim, value_support_size)
 
     def represent(self, x: torch.Tensor) -> torch.Tensor:
         hidden_state = self.represent_net(x)
@@ -311,7 +311,7 @@ class RepresentationConvAtariNet(nn.Module):
         c, h, w = input_shape
 
         # Original paper uses 3 res-blocks
-        num_res_blocks = 1
+        num_res_blocks = 2
 
         # output 48x48
         self.conv_1 = nn.Conv2d(in_channels=c, out_channels=128, kernel_size=3, stride=2, padding=1, bias=False)

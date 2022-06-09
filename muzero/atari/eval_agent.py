@@ -33,7 +33,7 @@ flags.DEFINE_integer("stack_history", 4, "Stack previous states.")
 flags.DEFINE_integer("frame_skip", 4, "Skip n frames.")
 flags.DEFINE_bool("gray_scale", True, "Gray scale observation image.")
 
-flags.DEFINE_integer('seed', 1, 'Seed the runtime.')
+flags.DEFINE_integer('seed', 5, 'Seed the runtime.')
 
 flags.DEFINE_string(
     'load_checkpoint_file',

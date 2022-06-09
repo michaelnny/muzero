@@ -27,14 +27,14 @@ from muzero.mcts import uct_search
 from muzero.config import make_classic_config
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string("environment_name", 'LunarLander-v2', "Classic problem like 'CartPole-v1', 'LunarLander-v2'")
-flags.DEFINE_integer("stack_history", 0, "Stack previous states.")
+flags.DEFINE_string("environment_name", 'CartPole-v1', "Classic problem like 'CartPole-v1', 'LunarLander-v2'")
+flags.DEFINE_integer("stack_history", 4, "Stack previous states.")
 
-flags.DEFINE_integer('seed', 1, 'Seed the runtime.')
+flags.DEFINE_integer('seed', 5, 'Seed the runtime.')
 
 flags.DEFINE_string(
     'load_checkpoint_file',
-    'checkpoints/classic/LunarLander-v2_train_steps_270000',
+    'checkpoints/classic/CartPole-v1_train_steps_45000',
     'Load the checkpoint from file.',
 )
 flags.DEFINE_string('record_video_dir', 'recordings/classic', 'Record play video.')
@@ -53,7 +53,7 @@ def main(argv):
     config = make_classic_config()
 
     network = MuZeroMLPNet(
-        input_shape, num_actions, config.num_planes, config.value_support_size, config.reward_support_size, config.hidden_size
+        input_shape, num_actions, config.num_planes, config.value_support_size, config.reward_support_size, config.hidden_dim
     )
 
     # Load states from checkpoint to resume training.

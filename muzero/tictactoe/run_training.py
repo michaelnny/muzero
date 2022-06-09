@@ -68,7 +68,7 @@ def main(argv):
                 config.num_planes,
                 config.value_support_size,
                 config.reward_support_size,
-                config.hidden_size,
+                config.hidden_dim,
             )
         return MuZeroBoardGameNet(input_shape, num_actions, config.num_res_blocks, config.num_planes)
 

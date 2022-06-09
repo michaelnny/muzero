@@ -27,16 +27,16 @@ from muzero.config import make_tictactoe_config
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('use_mlp_net', True, 'Use FC MLP network instead Conv2d network, default on.')
-flags.DEFINE_integer('seed', 1, 'Seed the runtime.')
+flags.DEFINE_integer('seed', 5, 'Seed the runtime.')
 
 flags.DEFINE_string(
     'load_black_checkpoint_file',
-    'checkpoints/tictactoe/TicTacToe_train_steps_80000',
+    'checkpoints/tictactoe/TicTacToe_train_steps_87000',
     'Load the last checkpoint from file.',
 )
 flags.DEFINE_string(
     'load_white_checkpoint_file',
-    'checkpoints/tictactoe/TicTacToe_train_steps_80000',
+    'checkpoints/tictactoe/TicTacToe_train_steps_87000',
     'Load the last checkpoint from file.',
 )
 
@@ -61,7 +61,7 @@ def main(argv):
                 config.num_planes,
                 config.value_support_size,
                 config.reward_support_size,
-                config.hidden_size,
+                config.hidden_dim,
             )
         return MuZeroBoardGameNet(input_shape, num_actions, config.num_res_blocks, config.num_planes)
 

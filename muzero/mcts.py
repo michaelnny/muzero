@@ -143,11 +143,11 @@ class Node:
             current.N += 1
 
             # What's the logic behind this??
-            if current.has_parent:
-                if config.is_board_game:
-                    min_max_stats.update(current.reward + config.discount * -current.Q)
-                else:
-                    min_max_stats.update(current.reward + config.discount * current.Q)
+            # if current.has_parent:
+            if config.is_board_game:
+                min_max_stats.update(current.reward + config.discount * -current.Q)
+            else:
+                min_max_stats.update(current.reward + config.discount * current.Q)
 
             if config.is_board_game and current.player_id == player_id:
                 value = -current.reward + config.discount * value
@@ -354,7 +354,7 @@ def uct_search(
     # Create root node
     state = torch.from_numpy(state).to(device=device, dtype=torch.float32)
     network_output = network.initial_inference(state[None, ...])
-    prior_prob, root_value = network_output.pi_probs, network_output.value
+    prior_prob = network_output.pi_probs
     root_node = Node(prior=0.0)
 
     # Add dirichlet noise to the prior probabilities to root node.
@@ -404,4 +404,4 @@ def uct_search(
         action_index = np.random.choice(np.arange(pi_prob.shape[0]), p=pi_prob)
 
     action = root_node.children[action_index].move
-    return (action, pi_prob, root_value)
+    return (action, pi_prob, root_node.Q)

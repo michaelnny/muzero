@@ -37,6 +37,7 @@ class MuZeroConfig:
         checkpoint_interval: Optional[int] = int(1e3),
         num_planes: Optional[int] = 256,
         num_res_blocks: Optional[int] = 16,
+        hidden_dim: Optional[int] = 64,
         value_support_size: Optional[int] = 1,
         reward_support_size: Optional[int] = 1,
         priority_exponent: Optional[float] = 1.0,
@@ -44,7 +45,7 @@ class MuZeroConfig:
         train_delay: Optional[float] = 0.0,
         replay_capacity: Optional[int] = int(10e6),
         min_replay_size: Optional[int] = int(2e4),
-        seq_length: Optional[int] = int(200),
+        acc_seq_length: Optional[int] = int(200),
         clip_grad: Optional[bool] = False,
         use_tensorboard: Optional[bool] = False,
         is_board_game: Optional[bool] = False,
@@ -55,15 +56,15 @@ class MuZeroConfig:
         self.num_res_blocks = num_res_blocks
         self.value_support_size = value_support_size
         self.reward_support_size = reward_support_size
-        self.hidden_size = 64  # for MLP network only
+        self.hidden_dim = hidden_dim  # hidden state dimension for MLP network only
 
         # Self-Play
         # visit_softmax_temperature_fn takes in two parameters (env_steps, train_steps)
         self.visit_softmax_temperature_fn: Callable[[int, int], float] = visit_softmax_temperature_fn
         self.num_simulations = num_simulations
         self.discount = discount
-        # Send samples to learning when self-play (measured in env steps) reached this sequence length.
-        self.seq_length = seq_length
+        # Send samples to learning when self-play (measured in env steps) accumulated this sequence length.
+        self.acc_seq_length = acc_seq_length
 
         # Root prior exploration noise.
         self.root_dirichlet_alpha = dirichlet_alpha
@@ -113,21 +114,22 @@ def make_tictactoe_config(use_mlp_net: bool = True, use_tensorboard: bool = True
     return MuZeroConfig(
         discount=1.0,
         dirichlet_alpha=0.25,
-        num_simulations=25,
+        num_simulations=30,
         batch_size=256,
         td_steps=0,  # Always use Monte Carlo return.
         lr_init=0.002,
-        lr_milestones=[10e3],
+        lr_milestones=[20e3],
         visit_softmax_temperature_fn=tictactoe_visit_softmax_temperature_fn,
         known_bounds=KnownBounds(-1, 1),
-        training_steps=50000,
+        training_steps=100000,
         num_planes=256 if use_mlp_net else 16,
-        num_res_blocks=0 if use_mlp_net else 2,
+        num_res_blocks=0 if use_mlp_net else 4,
+        hidden_dim=64 if use_mlp_net else 0,
         priority_exponent=0.0,  # Using Uniform replay
         importance_sampling_exponent=0.0,
         replay_capacity=100000,
         min_replay_size=10000,
-        seq_length=9999,
+        acc_seq_length=9999,
         train_delay=0.0,
         clip_grad=clip_grad,
         use_tensorboard=use_tensorboard,
@@ -149,12 +151,13 @@ def make_gomoku_config(use_tensorboard: bool = True, clip_grad: bool = False) ->
         known_bounds=KnownBounds(-1, 1),
         training_steps=1000000,
         num_planes=64,  # 256
-        num_res_blocks=4,  # 16
+        num_res_blocks=8,  # 16
+        hidden_dim=0,
         priority_exponent=0.0,  # Using Uniform replay
         importance_sampling_exponent=0.0,
         replay_capacity=100000,
         min_replay_size=20000,
-        seq_length=9999,
+        acc_seq_length=9999,
         train_delay=0.0,
         clip_grad=clip_grad,
         use_tensorboard=use_tensorboard,
@@ -168,22 +171,23 @@ def make_classic_config(use_tensorboard: bool = True, clip_grad: bool = False) -
     return MuZeroConfig(
         discount=0.997,
         dirichlet_alpha=0.25,
-        num_simulations=30,
+        num_simulations=50,
         batch_size=256,
         td_steps=10,
         lr_init=0.005,
-        lr_milestones=[50000],
+        lr_milestones=[25000],
         visit_softmax_temperature_fn=classic_visit_softmax_temperature_fn,
-        training_steps=200000,
-        num_planes=256,
+        training_steps=150000,
+        num_planes=512,
         num_res_blocks=0,  # using MLP net
+        hidden_dim=64,
         value_support_size=31,  # in the range [-15, 15]
         reward_support_size=31,  # in the range [-15, 15]
         priority_exponent=0.0,  # Using Uniform replay
         importance_sampling_exponent=0.0,
-        replay_capacity=200000,
+        replay_capacity=300000,
         min_replay_size=50000,
-        seq_length=9999,
+        acc_seq_length=9999,
         train_delay=0.0,
         clip_grad=clip_grad,
         use_tensorboard=use_tensorboard,
@@ -196,22 +200,23 @@ def make_atari_config(use_tensorboard: bool = True, clip_grad: bool = False) -> 
     return MuZeroConfig(
         discount=0.997,
         dirichlet_alpha=0.25,
-        num_simulations=30,
-        batch_size=8,
+        num_simulations=50,
+        batch_size=32,
         td_steps=10,
         lr_init=0.005,
         lr_milestones=[100e3],
         visit_softmax_temperature_fn=atari_visit_softmax_temperature_fn,
         training_steps=1000000,
-        num_planes=80,  # 256
-        num_res_blocks=4,  # 16
+        num_planes=128,  # 256
+        num_res_blocks=8,  # 16
+        hidden_dim=0,
         value_support_size=31,  # 601
         reward_support_size=31,  # 601
         priority_exponent=0.0,  # Using Uniform replay
         importance_sampling_exponent=0.0,
-        replay_capacity=500000,
+        replay_capacity=300000,
         min_replay_size=50000,
-        seq_length=200,
+        acc_seq_length=200,
         train_delay=0.0,
         clip_grad=clip_grad,
         use_tensorboard=use_tensorboard,
@@ -225,22 +230,23 @@ def make_atari_ram_config(use_tensorboard: bool = True, clip_grad: bool = False)
     return MuZeroConfig(
         discount=0.997,
         dirichlet_alpha=0.25,
-        num_simulations=30,
+        num_simulations=50,
         batch_size=256,
         td_steps=10,
-        lr_init=0.005,
-        lr_milestones=[100e3],
+        lr_init=0.05,
+        lr_milestones=[20e3, 150e3],
         visit_softmax_temperature_fn=atari_visit_softmax_temperature_fn,
         training_steps=1000000,
-        num_planes=512,
+        num_planes=1024,
         num_res_blocks=0,  # using MLP net
+        hidden_dim=256,
         value_support_size=31,
         reward_support_size=31,
         priority_exponent=0.0,  # Using Uniform replay
         importance_sampling_exponent=0.0,
-        replay_capacity=500000,
+        replay_capacity=300000,
         min_replay_size=50000,
-        seq_length=200,
+        acc_seq_length=200,
         train_delay=0.0,
         clip_grad=clip_grad,
         use_tensorboard=use_tensorboard,
@@ -274,9 +280,9 @@ def classic_visit_softmax_temperature_fn(env_steps, training_steps):
 
 
 def atari_visit_softmax_temperature_fn(env_steps, training_steps):
-    if training_steps < 250e3:
+    if training_steps < 150e3:
         return 1.0
-    elif training_steps < 500e3:
+    elif training_steps < 300e3:
         return 0.5
     else:
         return 0.25

@@ -25,8 +25,8 @@ import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 
 
-class TensorboardEpisodTracker:
-    """TensorboardEpisodTracker to write to tensorboard"""
+class ActorTracker:
+    """Actor tracker to write to tensorboard"""
 
     def __init__(self, writer: SummaryWriter):
         self._num_steps_since_reset = None
@@ -93,8 +93,8 @@ class TensorboardEpisodTracker:
         }
 
 
-class TensorboardLearnerTracker:
-    """TensorboardLearnerTracker to write to tensorboard"""
+class LearnerTracker:
+    """Learner tracker to write to tensorboard"""
 
     def __init__(self, writer: SummaryWriter):
         self._num_steps_since_reset = None
@@ -131,8 +131,8 @@ class TensorboardLearnerTracker:
         }
 
 
-class TensorboardEvaluatorTracker:
-    """TensorboardEvaluatorTracker to write to tensorboard"""
+class EvaluatorTracker:
+    """Evaluator tracker to write to tensorboard"""
 
     def __init__(self, writer: SummaryWriter):
         self._num_steps_since_reset = None
@@ -170,8 +170,8 @@ class TensorboardEvaluatorTracker:
         )
 
 
-class TensorboardBoardGameEvaluatorTracker:
-    """TensorboardBoardGameEvaluatorTracker to write to tensorboard"""
+class BoardGameEvaluatorTracker:
+    """Evaluator tracker for Board Game to write to tensorboard"""
 
     def __init__(self, writer: SummaryWriter):
         self._num_steps_since_reset = None
@@ -206,7 +206,7 @@ def make_actor_trackers(run_log_dir='actor'):
     writer = SummaryWriter(tb_log_dir)
 
     return [
-        TensorboardEpisodTracker(writer),
+        ActorTracker(writer),
     ]
 
 
@@ -227,7 +227,7 @@ def make_learner_trackers(run_log_dir='learner'):
     writer = SummaryWriter(tb_log_dir)
 
     return [
-        TensorboardLearnerTracker(writer),
+        LearnerTracker(writer),
     ]
 
 
@@ -248,6 +248,6 @@ def make_evaluator_trackers(run_log_dir='evaluator', is_board_game: bool = False
     writer = SummaryWriter(tb_log_dir)
 
     if is_board_game:
-        return [TensorboardBoardGameEvaluatorTracker(writer)]
+        return [BoardGameEvaluatorTracker(writer)]
 
-    return [TensorboardEvaluatorTracker(writer)]
+    return [EvaluatorTracker(writer)]

@@ -12,7 +12,7 @@
 
 ## Code structure
 
-* each directory `atari`, `classic`, `gomoku`, `tictactoe` contains the following modules:
+* each of the (`atari`, `classic`, `gomoku`, `tictactoe`) directory contains the following modules:
   - `run_training.py` trains the agent for a specific game/control problem.
   - `eval_agent.py` evaluate the trained agent by loading from checkpoint.
 * `config.py` contains the MuZero configuration for different game/control problem.
@@ -21,7 +21,8 @@
 * `mcts.py` contains the MCTS node and UCT tree-search algorithm.
 * `pipeline.py` contains the functions to run self-play, training, and evaluation loops.
 * `util.py` contains the functions for value and reward target transform and rescaling.
-* `trackers.py` contains the functions to monitoring traning progress using Tensorboard.
+* `replay.py` contains the experience replay class.
+* `trackers.py` contains the functions to monitoring training progress using Tensorboard.
 
 
 ## Note
@@ -102,7 +103,7 @@ python3 -m muzero.classic.eval_agent
 
 
 ### Screenshots Tic-Tac-Toe
-* Training performance measured in elo rating
+* Training performance measured in Elo rating
 ![Training performance](../main/screenshots/tictactoe.png)
 
 

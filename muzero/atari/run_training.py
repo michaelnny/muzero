@@ -30,12 +30,12 @@ from muzero.pipeline import run_self_play, run_training, run_data_collector, run
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("environment_name", 'PongNoFrameskip-v4', "Classic problem like Breakout, Pong")
-flags.DEFINE_integer('screen_size', 84, 'Environment frame screen height.')
-flags.DEFINE_integer("stack_history", 4, "Stack previous states.")
+flags.DEFINE_integer('screen_size', 96, 'Environment frame screen height.')
+flags.DEFINE_integer("stack_history", 8, "Stack previous states.")
 flags.DEFINE_integer("frame_skip", 4, "Skip n frames.")
 flags.DEFINE_bool("gray_scale", True, "Gray scale observation image.")
 
-flags.DEFINE_integer('num_actors', 4, 'Number of self-play actor processes.')
+flags.DEFINE_integer('num_actors', 6, 'Number of self-play actor processes.')
 
 flags.DEFINE_integer('seed', 1, 'Seed the runtime.')
 flags.DEFINE_bool('use_tensorboard', True, 'Monitor performance with Tensorboard, default on.')

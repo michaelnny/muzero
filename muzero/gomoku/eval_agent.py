@@ -30,7 +30,7 @@ flags.DEFINE_integer('board_size', 9, 'Board size for Gomoku.')
 flags.DEFINE_integer('num_to_win', 5, 'Number in a row to win.')
 flags.DEFINE_integer('stack_history', 4, 'Stack previous states.')
 
-flags.DEFINE_integer('seed', 1, 'Seed the runtime.')
+flags.DEFINE_integer('seed', 5, 'Seed the runtime.')
 
 flags.DEFINE_string(
     'load_black_checkpoint_file',

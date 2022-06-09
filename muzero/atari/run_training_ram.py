@@ -33,11 +33,11 @@ flags.DEFINE_string("environment_name", 'Breakout-ramNoFrameskip-v4', "Classic p
 flags.DEFINE_integer("stack_history", 4, "Stack previous states.")
 flags.DEFINE_integer("frame_skip", 4, "Skip n frames.")
 
-flags.DEFINE_integer('num_actors', 4, 'Number of self-play actor processes.')
+flags.DEFINE_integer('num_actors', 6, 'Number of self-play actor processes.')
 
 flags.DEFINE_integer('seed', 1, 'Seed the runtime.')
 flags.DEFINE_bool('use_tensorboard', True, 'Monitor performance with Tensorboard, default on.')
-flags.DEFINE_bool('clip_grad', True, 'Clip gradient, default off.')
+flags.DEFINE_bool('clip_grad', False, 'Clip gradient, default off.')
 
 flags.DEFINE_string('checkpoint_dir', 'checkpoints/atari', 'Path for checkpoint file.')
 flags.DEFINE_string(
@@ -91,17 +91,17 @@ def main(argv):
     config = make_atari_ram_config(FLAGS.use_tensorboard, FLAGS.clip_grad)
 
     network = MuZeroMLPNet(
-        input_shape, num_actions, config.num_planes, config.value_support_size, config.reward_support_size, config.hidden_size
+        input_shape, num_actions, config.num_planes, config.value_support_size, config.reward_support_size, config.hidden_dim
     )
     optimizer = torch.optim.Adam(network.parameters(), lr=config.lr_init, weight_decay=config.weight_decay)
     lr_scheduler = MultiStepLR(optimizer, milestones=config.lr_milestones, gamma=config.lr_decay_rate)
 
     actor_network = MuZeroMLPNet(
-        input_shape, num_actions, config.num_planes, config.value_support_size, config.reward_support_size, config.hidden_size
+        input_shape, num_actions, config.num_planes, config.value_support_size, config.reward_support_size, config.hidden_dim
     )
     actor_network.share_memory()
     new_ckpt_network = MuZeroMLPNet(
-        input_shape, num_actions, config.num_planes, config.value_support_size, config.reward_support_size, config.hidden_size
+        input_shape, num_actions, config.num_planes, config.value_support_size, config.reward_support_size, config.hidden_dim
     )
 
     replay = PrioritizedReplay(config.replay_capacity, config.priority_exponent, config.importance_sampling_exponent)

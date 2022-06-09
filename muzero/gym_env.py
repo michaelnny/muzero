@@ -534,7 +534,9 @@ def create_atari_ram_environment(
     env = gym.wrappers.TimeLimit(env.env, max_episode_steps=max_episode_steps)
 
     env = NoopResetWrapper(env, noop_max=noop_max)
-    env = MaxAndSkipWrapper(env, skip=frame_skip)
+
+    if frame_skip > 1:
+        env = MaxAndSkipWrapper(env, skip=frame_skip)
 
     if done_on_life_loss:
         env = EpisodicLifeWrapper(env)

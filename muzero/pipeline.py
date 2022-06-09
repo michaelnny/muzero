@@ -34,7 +34,7 @@ from muzero.network import MuZeroNet
 from muzero.replay import Transition, PrioritizedReplay
 from muzero.trackers import make_actor_trackers, make_learner_trackers, make_evaluator_trackers
 from muzero.mcts import uct_search
-from muzero.util import scalar_to_categorical_probabilities, logits_to_transformed_expected_value, signed_hyperbolic
+from muzero.util import scalar_to_categorical_probabilities, logits_to_transformed_expected_value
 from muzero.rating import compute_elo_rating
 
 
@@ -81,6 +81,8 @@ def run_self_play(
     game = 0
 
     while not stop_event.is_set():
+        network.eval()
+
         # For each new game.
         obs = env.reset()
         done = False
@@ -119,10 +121,10 @@ def run_self_play(
             # we needs these extra sequences to compute the target and unroll sequences.
             if (
                 not config.is_board_game
-                and len(episode_trajectory) == config.seq_length + config.unroll_steps + config.td_steps
+                and len(episode_trajectory) == config.acc_seq_length + config.unroll_steps + config.td_steps
             ):
                 # Unpack list of tuples into seperate lists.
-                observations, actions, rewards, pi_probs, root_values, search_values, _ = map(list, zip(*episode_trajectory))
+                observations, actions, rewards, pi_probs, root_values, _ = map(list, zip(*episode_trajectory))
                 # Compute n_step target value.
                 target_values = compute_n_step_target(rewards, root_values, config.td_steps, config.discount)
 
@@ -130,18 +132,18 @@ def run_self_play(
 
                 # Make unroll sequences and send to learner.
                 for transition, priority in make_unroll_sequence(
-                    observations[: config.seq_length],
-                    actions[: config.seq_length + config.unroll_steps],
-                    rewards[: config.seq_length + config.unroll_steps],
-                    pi_probs[: config.seq_length + config.unroll_steps],
-                    target_values[: config.seq_length + config.unroll_steps],
-                    priorities[: config.seq_length + config.unroll_steps],
+                    observations[: config.acc_seq_length],
+                    actions[: config.acc_seq_length + config.unroll_steps],
+                    rewards[: config.acc_seq_length + config.unroll_steps],
+                    pi_probs[: config.acc_seq_length + config.unroll_steps],
+                    target_values[: config.acc_seq_length + config.unroll_steps],
+                    priorities[: config.acc_seq_length + config.unroll_steps],
                     config.unroll_steps,
                 ):
                     data_queue.put((transition, priority))
 
-                del episode_trajectory[: config.seq_length]
-                del (observations, actions, rewards, pi_probs, root_values, search_values, priorities, target_values)
+                del episode_trajectory[: config.acc_seq_length]
+                del (observations, actions, rewards, pi_probs, root_values, priorities, target_values)
 
         game += 1
         if game % 1000 == 0:
@@ -152,7 +154,7 @@ def run_self_play(
 
         if config.is_board_game:
             # Using MC returns as target value.
-            target_values = compute_mc_returns(rewards, player_ids)
+            target_values = compute_mc_return_target(rewards, player_ids)
         else:
             # Compute n_step target value.
             target_values = compute_n_step_target(rewards, root_values, config.td_steps, config.discount)
@@ -234,7 +236,7 @@ def run_training(  # noqa: C901
         }
 
     while True:
-        if replay.size < config.min_replay_size:
+        if replay.size < config.min_replay_size or replay.size < config.batch_size:
             continue
 
         # Signaling other parties to stop running pipeline.
@@ -254,9 +256,10 @@ def run_training(  # noqa: C901
         optimizer.step()
         lr_scheduler.step()
 
-        if priorities.shape != (config.batch_size,):
-            raise RuntimeError(f'Expect priorities has shape ({config.batch_size}, ), got {priorities.shape}')
-        replay.update_priorities(indices, priorities)
+        if priorities is not None:
+            if priorities.shape != (config.batch_size,):
+                raise RuntimeError(f'Expect priorities has shape ({config.batch_size}, ), got {priorities.shape}')
+            replay.update_priorities(indices, priorities)
 
         train_steps_counter.value += 1
 
@@ -576,34 +579,33 @@ def calc_loss(network: MuZeroNet, device: torch.device, transitions: Transition,
         pred_pi_logits, pred_value = network.prediction(hidden_state)
         hidden_state, pred_reward = network.dynamics(hidden_state, action[:, t].unsqueeze(1))
 
+        # Scale the gradient for dynamics function by 0.5.
+        hidden_state.register_hook(lambda grad: grad * 0.5)
+
         value_loss += loss_func(pred_value.squeeze(), target_value[:, t], network.mse_loss_for_value)
 
         # Shouldn't we exclude the reward loss for board games as stated in the paper?
         reward_loss += loss_func(pred_reward.squeeze(), target_reward[:, t], network.mse_loss_for_reward)
         policy_loss += loss_func(pred_pi_logits, target_pi_prob[:, t])
 
-        # Scale the gradient for dynamics function by 0.5.
-        hidden_state.register_hook(lambda grad: grad * 0.5)
-
         pred_values.append(pred_value.detach())
-
-    reward_loss = torch.mean(reward_loss * weights.detach())
-    value_loss = torch.mean(value_loss * weights.detach())
-    policy_loss = torch.mean(policy_loss * weights.detach())
 
     loss = reward_loss + value_loss + policy_loss
 
-    # Scale the loss by 1/unroll_step.
+    # Scale loss using importance sampling weights, then average over batch dimension B.
+    loss = torch.mean(loss * weights.detach())
+
+    # Scale the loss by 1/unroll_steps.
     loss.register_hook(lambda grad: grad * loss_scale)
 
     # Using the delta between predicted values and target values as priorities.
-    pred_values = torch.stack(pred_values, dim=1)
     with torch.no_grad():
+        pred_values = torch.stack(pred_values, dim=1)
         if network.mse_loss_for_value:
-            pred_values_scalar = pred_values.squeeze(1)
+            pred_values_scalar = pred_values.squeeze(-1)
         else:
             pred_values_scalar = logits_to_transformed_expected_value(pred_values, network.value_support_size).squeeze(-1)
-        priorities = torch.abs(pred_values_scalar - target_value_scalar).mean(1).cpu().numpy()
+        priorities = torch.abs(pred_values_scalar[:, 0] - target_value_scalar[:, 0]).cpu().numpy()
 
     return loss, priorities
 
@@ -625,18 +627,14 @@ def loss_func(prediction: torch.Tensor, target: torch.Tensor, mse: bool = False)
     return F.cross_entropy(prediction, target, reduction='none')
 
 
-def scale_gradient(x: torch.Tensor, scale: float) -> torch.Tensor:
-    return scale * x + (1.0 - scale) * torch.detach(x)
-
-
-def compute_n_step_target(in_rewards: List[float], in_root_values: List[float], td_steps: int, discount: float) -> List[float]:
+def compute_n_step_target(rewards: List[float], root_values: List[float], td_steps: int, discount: float) -> List[float]:
     """Compute n-step target for Atari and classic openAI Gym problems.
 
     zt = ut+1 + γut+2 + ... + γn−1ut+n + γnνt+n
 
     Args:
-        in_rewards: a list of rewards received from the env, length T.
-        in_root_values: a list of root node value from MCTS search, length T.
+        rewards: a list of rewards received from the env, length T.
+        root_values: a list of root node value from MCTS search, length T.
         td_steps: the number of steps into the future for n-step value.
         discount: discount for future reward.
 
@@ -648,32 +646,33 @@ def compute_n_step_target(in_rewards: List[float], in_root_values: List[float], 
             lists `rewards` and `root_values` do not have equal length.
     """
 
-    if len(in_rewards) != len(in_root_values):
+    if len(rewards) != len(root_values):
         raise ValueError('Arguments `rewards` and `root_values` don have the same length.')
 
-    T = len(in_rewards)
+    T = len(rewards)
 
-    rewards = list(in_rewards)
-    root_values = list(in_root_values)
+    # Make a shallow copy to avoid manipulate on the original data.
+    _rewards = list(rewards)
+    _root_values = list(root_values)
 
     # Padding zeros at the end of trajectory for easy computation.
-    rewards += [0] * td_steps
-    root_values += [0] * td_steps
+    _rewards += [0] * td_steps
+    _root_values += [0] * td_steps
 
     target_values = []
     for t in range(T):
         bootstrap_index = t + td_steps
-        target = sum([discount**i * reward for i, reward in enumerate(rewards[t:bootstrap_index])])
+        value = sum([discount**i * reward for i, reward in enumerate(_rewards[t:bootstrap_index])])
 
         # Add MCTS root node search value for bootstrap.
-        target += discount**td_steps * root_values[bootstrap_index]
-        target_values.append(target)
+        value += discount**td_steps * _root_values[bootstrap_index]
+        target_values.append(value)
 
     return target_values
 
 
-def compute_mc_returns(rewards: List[float], player_ids: List[float]) -> List[float]:
-    """Compute the target value using Monte Carlo returns.
+def compute_mc_return_target(rewards: List[float], player_ids: List[float]) -> List[float]:
+    """Compute the target value using Monte Carlo returns. This is for board game only.
 
     Args:
         rewards: a list of rewards received from the env, length T.
@@ -715,8 +714,8 @@ def make_unroll_sequence(
     priorities: List[float],
     unroll_steps: int,
 ) -> Iterable[Transition]:
-    """Turn a list of episode history from t=0 to t=T, where T is terminal into a list of structured transition object,
-    this is only for Atari and classic openAI Gym problems.
+    """Turn a lists of episode history into a list of structured transition object,
+    and stack unroll_steps for actions, rewards, values, MCTS policy.
 
     Args:
         observations: a list of history environment observations.
@@ -756,7 +755,7 @@ def make_unroll_sequence(
 
         yield (
             Transition(
-                state=observations[t],
+                state=observations[t],  # no staking for observation, since it is only used to get initial hidden state.
                 action=stacked_action,
                 reward=stacked_reward,
                 value=stacked_value,
