@@ -114,8 +114,8 @@ def make_tictactoe_config(use_mlp_net: bool = True, use_tensorboard: bool = True
     return MuZeroConfig(
         discount=1.0,
         dirichlet_alpha=0.25,
-        num_simulations=30,
-        batch_size=256,
+        num_simulations=25,
+        batch_size=256 if use_mlp_net else 64,
         td_steps=0,  # Always use Monte Carlo return.
         lr_init=0.002,
         lr_milestones=[20e3],
@@ -123,7 +123,7 @@ def make_tictactoe_config(use_mlp_net: bool = True, use_tensorboard: bool = True
         known_bounds=KnownBounds(-1, 1),
         training_steps=100000,
         num_planes=256 if use_mlp_net else 16,
-        num_res_blocks=0 if use_mlp_net else 4,
+        num_res_blocks=0 if use_mlp_net else 2,
         hidden_dim=64 if use_mlp_net else 0,
         priority_exponent=0.0,  # Using Uniform replay
         importance_sampling_exponent=0.0,
