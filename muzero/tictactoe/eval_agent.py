@@ -31,12 +31,12 @@ flags.DEFINE_integer('seed', 5, 'Seed the runtime.')
 
 flags.DEFINE_string(
     'load_black_checkpoint_file',
-    'checkpoints/tictactoe/TicTacToe_train_steps_87000',
+    'saved_checkpoints/TicTacToe_train_steps_87000',
     'Load the last checkpoint from file.',
 )
 flags.DEFINE_string(
     'load_white_checkpoint_file',
-    'checkpoints/tictactoe/TicTacToe_train_steps_87000',
+    'saved_checkpoints/TicTacToe_train_steps_87000',
     'Load the last checkpoint from file.',
 )
 

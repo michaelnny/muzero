@@ -27,14 +27,15 @@ from muzero.mcts import uct_search
 from muzero.config import make_classic_config
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string("environment_name", 'CartPole-v1', "Classic problem like 'CartPole-v1', 'LunarLander-v2'")
+flags.DEFINE_string("environment_name", 'LunarLander-v2', "Classic problem like 'CartPole-v1', 'LunarLander-v2'")
 flags.DEFINE_integer("stack_history", 4, "Stack previous states.")
 
 flags.DEFINE_integer('seed', 5, 'Seed the runtime.')
 
 flags.DEFINE_string(
     'load_checkpoint_file',
-    'checkpoints/classic/CartPole-v1_train_steps_45000',
+    # 'saved_checkpoints/CartPole-v1_train_steps_45000',
+    'saved_checkpoints/LunarLander-v2_train_steps_118000',
     'Load the checkpoint from file.',
 )
 flags.DEFINE_string('record_video_dir', 'recordings/classic', 'Record play video.')
