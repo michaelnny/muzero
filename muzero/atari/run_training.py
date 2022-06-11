@@ -34,6 +34,9 @@ flags.DEFINE_integer('screen_size', 96, 'Environment frame screen height.')
 flags.DEFINE_integer("stack_history", 8, "Stack previous states.")
 flags.DEFINE_integer("frame_skip", 4, "Skip n frames.")
 flags.DEFINE_bool("gray_scale", True, "Gray scale observation image.")
+flags.DEFINE_bool('clip_reward', True, 'Clip reward in the range [-1, 1], default on.')
+flags.DEFINE_bool('done_on_life_loss', True, 'End of game if loss a life, default on.')
+
 
 flags.DEFINE_integer('num_actors', 6, 'Number of self-play actor processes.')
 
@@ -71,7 +74,8 @@ def main(argv):
             FLAGS.stack_history,
             FLAGS.frame_skip,
             FLAGS.screen_size,
-            done_on_life_loss=True,
+            clip_reward=FLAGS.clip_reward,
+            done_on_life_loss=FLAGS.done_on_life_loss,
             grayscale=FLAGS.gray_scale,
         )
         for i in range(FLAGS.num_actors)
@@ -83,7 +87,8 @@ def main(argv):
         FLAGS.stack_history,
         FLAGS.frame_skip,
         FLAGS.screen_size,
-        done_on_life_loss=True,
+        clip_reward=FLAGS.clip_reward,
+        done_on_life_loss=FLAGS.done_on_life_loss,
         grayscale=FLAGS.gray_scale,
     )
 

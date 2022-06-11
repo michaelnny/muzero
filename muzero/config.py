@@ -156,7 +156,7 @@ def make_gomoku_config(use_tensorboard: bool = True, clip_grad: bool = False) ->
         priority_exponent=0.0,  # Using Uniform replay
         importance_sampling_exponent=0.0,
         replay_capacity=100000,
-        min_replay_size=20000,
+        min_replay_size=10000,
         acc_seq_length=9999,
         train_delay=0.0,
         clip_grad=clip_grad,
@@ -185,8 +185,8 @@ def make_classic_config(use_tensorboard: bool = True, clip_grad: bool = False) -
         reward_support_size=31,  # in the range [-15, 15]
         priority_exponent=0.0,  # Using Uniform replay
         importance_sampling_exponent=0.0,
-        replay_capacity=300000,
-        min_replay_size=50000,
+        replay_capacity=200000,
+        min_replay_size=20000,
         acc_seq_length=9999,
         train_delay=0.0,
         clip_grad=clip_grad,
@@ -196,56 +196,26 @@ def make_classic_config(use_tensorboard: bool = True, clip_grad: bool = False) -
 
 
 def make_atari_config(use_tensorboard: bool = True, clip_grad: bool = False) -> MuZeroConfig:
-    """Returns MuZero config for openAI Gym image as observation version of Atari games."""
+    """Returns MuZero config for openAI Gym Atari games."""
     return MuZeroConfig(
         discount=0.997,
         dirichlet_alpha=0.25,
-        num_simulations=50,
+        num_simulations=30,
         batch_size=32,
         td_steps=10,
-        lr_init=0.005,
-        lr_milestones=[100e3],
+        lr_init=0.05,
+        lr_milestones=[100e3, 200e3],
         visit_softmax_temperature_fn=atari_visit_softmax_temperature_fn,
-        training_steps=1000000,
+        training_steps=int(10e6),
         num_planes=128,  # 256
         num_res_blocks=8,  # 16
         hidden_dim=0,
-        value_support_size=31,  # 601
-        reward_support_size=31,  # 601
+        value_support_size=61,  # 601
+        reward_support_size=61,  # 601
         priority_exponent=0.0,  # Using Uniform replay
         importance_sampling_exponent=0.0,
-        replay_capacity=300000,
-        min_replay_size=50000,
-        acc_seq_length=200,
-        train_delay=0.0,
-        clip_grad=clip_grad,
-        use_tensorboard=use_tensorboard,
-        is_board_game=False,
-    )
-
-
-def make_atari_ram_config(use_tensorboard: bool = True, clip_grad: bool = False) -> MuZeroConfig:
-    """Returns MuZero config for openAI Gym RAM as observation version of Atari games."""
-
-    return MuZeroConfig(
-        discount=0.997,
-        dirichlet_alpha=0.25,
-        num_simulations=50,
-        batch_size=256,
-        td_steps=10,
-        lr_init=0.05,
-        lr_milestones=[20e3, 150e3],
-        visit_softmax_temperature_fn=atari_visit_softmax_temperature_fn,
-        training_steps=1000000,
-        num_planes=1024,
-        num_res_blocks=0,  # using MLP net
-        hidden_dim=256,
-        value_support_size=31,
-        reward_support_size=31,
-        priority_exponent=0.0,  # Using Uniform replay
-        importance_sampling_exponent=0.0,
-        replay_capacity=300000,
-        min_replay_size=50000,
+        replay_capacity=200000,
+        min_replay_size=20000,
         acc_seq_length=200,
         train_delay=0.0,
         clip_grad=clip_grad,
@@ -280,9 +250,9 @@ def classic_visit_softmax_temperature_fn(env_steps, training_steps):
 
 
 def atari_visit_softmax_temperature_fn(env_steps, training_steps):
-    if training_steps < 150e3:
+    if training_steps < 500e3:
         return 1.0
-    elif training_steps < 300e3:
+    elif training_steps < 1000e3:
         return 0.5
     else:
         return 0.25
