@@ -16,6 +16,8 @@
 """
 from absl import app
 from absl import flags
+from absl import logging
+import os
 import multiprocessing
 import threading
 import torch
@@ -25,7 +27,7 @@ from muzero.games.tictactoe import TicTacToeEnv
 from muzero.network import MuZeroMLPNet, MuZeroBoardGameNet
 from muzero.replay import PrioritizedReplay
 from muzero.config import make_tictactoe_config
-from muzero.pipeline import run_self_play, run_training, run_data_collector, run_board_game_evaluator
+from muzero.pipeline import run_self_play, run_training, run_data_collector, run_board_game_evaluator, load_checkpoint
 
 FLAGS = flags.FLAGS
 flags.DEFINE_bool('use_mlp_net', True, 'Use FC MLP network instead Conv2d network, default on.')
@@ -35,6 +37,11 @@ flags.DEFINE_integer('num_actors', 4, 'Number of self-play actor processes.')
 flags.DEFINE_integer('seed', 1, 'Seed the runtime.')
 flags.DEFINE_float('initial_elo', 0.0, 'Initial elo rating, for evaluation agent performance only.')
 flags.DEFINE_string('checkpoint_dir', 'checkpoints/tictactoe', 'Path for checkpoint file.')
+flags.DEFINE_string(
+    'load_checkpoint_file',
+    '',
+    'Load the checkpoint from file.',
+)
 flags.DEFINE_integer(
     'samples_save_frequency', -1, 'The frequency (measured in number added in replay) to save self-play samples in replay.'
 )
@@ -95,6 +102,20 @@ def main(argv):
 
     # Shared training steps counter, so actors can adjust temperature used in MCTS.
     train_steps_counter = multiprocessing.Value('i', 0)
+
+    # Load states from checkpoint to resume training.
+    if FLAGS.load_checkpoint_file is not None and os.path.isfile(FLAGS.load_checkpoint_file):
+        loaded_state = load_checkpoint(FLAGS.load_checkpoint_file, 'cpu')
+        network.load_state_dict(loaded_state['network'])
+        optimizer.load_state_dict(loaded_state['optimizer'])
+        lr_scheduler.load_state_dict(loaded_state['lr_scheduler'])
+        train_steps_counter.value = loaded_state['train_steps']
+
+        actor_network.load_state_dict(loaded_state['network'])
+        old_ckpt_network.load_state_dict(loaded_state['network'])
+
+        logging.info(f'Loaded state from checkpoint {FLAGS.load_checkpoint_file}')
+        logging.info(f'Current state: train steps {train_steps_counter.value}, learing rate {lr_scheduler.get_last_lr()}')
 
     # Start to collect samples from self-play on a new thread.
     data_collector = threading.Thread(

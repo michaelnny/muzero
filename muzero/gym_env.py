@@ -298,6 +298,35 @@ class ClipRewardWithBoundWrapper(gym.RewardWrapper):
         return None if reward is None else max(min(reward, self._bound), -self._bound)
 
 
+class FireOnResetWrapper(gym.Wrapper):
+    """Some environments requires the agent to press the 'FIRE' button to start the game,
+    this wrapper will automatically take the 'FIRE' action when calls reset().
+
+    Code adapted from openAI Atari baseline.
+    https://github.com/openai/baselines/blob/master/baselines/common/atari_wrappers.py
+    """
+
+    def __init__(self, env):
+
+        super().__init__(env)
+        assert env.unwrapped.get_action_meanings()[1] == 'FIRE'
+        assert len(env.unwrapped.get_action_meanings()) >= 3
+
+    def reset(self, **kwargs):
+        """Try to take the 'FIRE' action."""
+        self.env.reset(**kwargs)
+        obs, _, done, _ = self.env.step(1)
+        if done:
+            self.env.reset(**kwargs)
+        obs, _, done, _ = self.env.step(2)
+        if done:
+            self.env.reset(**kwargs)
+        return obs
+
+    def step(self, action):
+        return self.env.step(action)
+
+
 class ObservationChannelFirstWrapper(gym.ObservationWrapper):
     """Make observation image channel first, this is for PyTorch only."""
 
@@ -368,6 +397,9 @@ def create_atari_environment(
 
     if clip_reward:
         env = ClipRewardWithBoundWrapper(env, 1)
+
+    if 'FIRE' in env.unwrapped.get_action_meanings():
+        env = FireOnResetWrapper(env)
 
     env = AtariPreprocessing(
         env,

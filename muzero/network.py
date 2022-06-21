@@ -284,11 +284,6 @@ class ResNetBlock(nn.Module):
         return out
 
 
-###############################################################################
-# Conv2d Net
-###############################################################################
-
-
 def calc_conv2d_output(h_w, kernel_size=1, stride=1, pad=0, dilation=1):
     """takes a tuple of (h,w) and returns a tuple of (h,w)"""
 
@@ -310,13 +305,13 @@ class RepresentationConvAtariNet(nn.Module):
         super().__init__()
         c, h, w = input_shape
 
-        # Original paper uses 3 res-blocks
-        num_res_blocks = 2
-
         # output 48x48
         self.conv_1 = nn.Conv2d(in_channels=c, out_channels=128, kernel_size=3, stride=2, padding=1, bias=False)
 
         self.res_blocks_1 = nn.Sequential(*[ResNetBlock(128) for _ in range(2)])
+
+        # Original paper uses 3 res-blocks
+        num_res_blocks = 2
 
         # output 24x24
         self.conv_2 = nn.Conv2d(in_channels=128, out_channels=num_planes, kernel_size=3, stride=2, padding=1, bias=False)
@@ -416,9 +411,7 @@ class DynamicsConvNet(nn.Module):
             nn.BatchNorm2d(num_features=1),
             nn.ReLU(),
             nn.Flatten(),
-            nn.Linear(1 * h * w, num_planes),
-            nn.ReLU(),
-            nn.Linear(num_planes, support_size),
+            nn.Linear(1 * h * w, support_size),
         )
 
     def forward(self, hidden_state: torch.Tensor, action: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -474,9 +467,7 @@ class PredictionConvNet(nn.Module):
             nn.BatchNorm2d(num_features=1),
             nn.ReLU(),
             nn.Flatten(),
-            nn.Linear(1 * h * w, num_planes),
-            nn.ReLU(),
-            nn.Linear(num_planes, support_size),
+            nn.Linear(1 * h * w, support_size),
         )
 
     def forward(self, hidden_state: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:

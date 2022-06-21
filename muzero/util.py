@@ -28,12 +28,20 @@ def signed_parabolic(x: torch.Tensor, eps: float = 1e-3) -> torch.Tensor:
     return torch.sign(x) * (torch.square(z) - 1)
 
 
-def normalize_hidden_state(x: torch.Tensor) -> torch.Tensor:
+def normalize_hidden_state(hidden_state: torch.Tensor) -> torch.Tensor:
     """Normalize hidden state to the range [0, 1]"""
-    _min = x.min(dim=1, keepdim=True)[0]
-    _max = x.max(dim=1, keepdim=True)[0]
-    normalized = (x - _min) / (_max - _min + 1e-8)
+    _min = hidden_state.min(dim=1, keepdim=True)[0]
+    _max = hidden_state.max(dim=1, keepdim=True)[0]
+    normalized = (hidden_state - _min) / (_max - _min + 1e-8)
     return normalized
+
+    # max_hidden_state = torch.max(hidden_state, 1, keepdims=True)[0]
+    # min_hidden_state = torch.min(hidden_state, 1, keepdims=True)[0]
+    # hidden_state_range = max_hidden_state - min_hidden_state
+    # hidden_state = hidden_state - min_hidden_state
+    # hidden_state = torch.divide(hidden_state, hidden_state_range)
+    # hidden_state = hidden_state * 2.0 - 1.0
+    # return hidden_state
 
 
 def transform_to_2hot(scalar: torch.Tensor, min_value: float, max_value: float, num_bins: int) -> torch.Tensor:

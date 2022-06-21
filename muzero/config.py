@@ -115,7 +115,7 @@ def make_tictactoe_config(use_mlp_net: bool = True, use_tensorboard: bool = True
         discount=1.0,
         dirichlet_alpha=0.25,
         num_simulations=25,
-        batch_size=256 if use_mlp_net else 64,
+        batch_size=256,
         td_steps=0,  # Always use Monte Carlo return.
         lr_init=0.002,
         lr_milestones=[20e3],
@@ -150,7 +150,7 @@ def make_gomoku_config(use_tensorboard: bool = True, clip_grad: bool = False) ->
         visit_softmax_temperature_fn=gomoku_visit_softmax_temperature_fn,
         known_bounds=KnownBounds(-1, 1),
         training_steps=1000000,
-        num_planes=64,  # 256
+        num_planes=128,  # 256
         num_res_blocks=8,  # 16
         hidden_dim=0,
         priority_exponent=0.0,  # Using Uniform replay
