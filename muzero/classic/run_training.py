@@ -17,9 +17,9 @@
 from absl import app
 from absl import flags
 from absl import logging
-import os
 import multiprocessing
 import threading
+import numpy as np
 import torch
 from torch.optim.lr_scheduler import MultiStepLR
 
@@ -33,7 +33,7 @@ from muzero.pipeline import run_self_play, run_training, run_data_collector, run
 FLAGS = flags.FLAGS
 flags.DEFINE_string("environment_name", 'CartPole-v1', "Classic problem like 'CartPole-v1', 'LunarLander-v2'")
 flags.DEFINE_integer("stack_history", 4, "Stack last N states and actions.")
-flags.DEFINE_integer('num_actors', 6, 'Number of self-play actor processes.')
+flags.DEFINE_integer('num_actors', 4, 'Number of self-play actor processes.')
 flags.DEFINE_integer('seed', 1, 'Seed the runtime.')
 flags.DEFINE_bool('use_tensorboard', True, 'Monitor performance with Tensorboard, default on.')
 flags.DEFINE_bool('clip_grad', False, 'Clip gradient, default off.')
@@ -52,6 +52,11 @@ def main(argv):
     del argv
 
     runtime_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    random_state = np.random.RandomState(FLAGS.seed)  # pylint: disable=no-member
+    torch.manual_seed(FLAGS.seed)
+    if torch.backends.cudnn.enabled:
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
 
     self_play_envs = [
         create_classic_environment(FLAGS.environment_name, FLAGS.seed + i**2, FLAGS.stack_history)
@@ -83,7 +88,15 @@ def main(argv):
         input_shape, num_actions, config.num_planes, config.value_support_size, config.reward_support_size, config.hidden_dim
     )
 
-    replay = PrioritizedReplay(config.replay_capacity, config.priority_exponent, config.importance_sampling_exponent)
+    def importance_sampling_exponent_schedule(x):
+        return config.importance_sampling_exponent
+
+    replay = PrioritizedReplay(
+        config.replay_capacity,
+        config.priority_exponent,
+        importance_sampling_exponent_schedule,
+        random_state,
+    )
 
     # Use the stop_event to signaling actors to stop running.
     stop_event = multiprocessing.Event()

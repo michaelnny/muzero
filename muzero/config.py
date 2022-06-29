@@ -76,7 +76,7 @@ class MuZeroConfig:
 
         # If we already have some information about which values occur in the
         # environment, we can use them to initialize the rescaling.
-        # This is not strictly necessary, but establishes identical behaviour to
+        # This is not strictly necessary, but establishes identical behavior to
         # AlphaZero in board games.
         self.known_bounds = known_bounds
 
@@ -183,8 +183,8 @@ def make_classic_config(use_tensorboard: bool = True, clip_grad: bool = False) -
         hidden_dim=64,
         value_support_size=31,  # in the range [-15, 15]
         reward_support_size=31,  # in the range [-15, 15]
-        priority_exponent=0.0,  # Using Uniform replay
-        importance_sampling_exponent=0.0,
+        # priority_exponent=0.0,  # Using Uniform replay
+        # importance_sampling_exponent=0.0,
         replay_capacity=200000,
         min_replay_size=20000,
         acc_seq_length=9999,
@@ -212,8 +212,8 @@ def make_atari_config(use_tensorboard: bool = True, clip_grad: bool = False) -> 
         hidden_dim=0,
         value_support_size=61,  # 601
         reward_support_size=61,  # 601
-        priority_exponent=0.0,  # Using Uniform replay
-        importance_sampling_exponent=0.0,
+        # priority_exponent=0.0,  # Using Uniform replay
+        # importance_sampling_exponent=0.0,
         replay_capacity=200000,
         min_replay_size=20000,
         acc_seq_length=200,

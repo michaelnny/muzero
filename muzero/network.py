@@ -30,6 +30,16 @@ class NetworkOutputs(NamedTuple):
     value: torch.Tensor
 
 
+def initialize_weights(net: nn.Module) -> None:
+    """Initialize weights for Conv2d and Linear layers using kaming initializer."""
+    assert isinstance(net, nn.Module)
+
+    for m in net.modules():
+        if isinstance(m, (nn.Conv2d, nn.Linear)):
+            # nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
+            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+
+
 class MuZeroNet(nn.Module):
     """Base MuZero model classs."""
 
@@ -505,6 +515,8 @@ class MuZeroAtariNet(MuZeroNet):  # pylint: disable=abstract-method
         self.prediction_net = PredictionConvNet(
             prediction_input_shape, num_actions, num_res_blocks, num_planes, value_support_size
         )
+
+        initialize_weights(self)
 
     def represent(self, x: torch.Tensor) -> torch.Tensor:
         hidden_state = self.represent_net(x)

@@ -19,6 +19,7 @@ from absl import logging
 import os
 import multiprocessing
 import threading
+import numpy as np
 import torch
 from torch.optim.lr_scheduler import MultiStepLR
 
@@ -29,10 +30,12 @@ from muzero.gym_env import create_atari_environment
 from muzero.pipeline import run_self_play, run_training, run_data_collector, run_evaluator, load_checkpoint, load_from_file
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string("environment_name", 'PongNoFrameskip-v4', "Classic problem like Breakout, Pong")
-flags.DEFINE_integer('screen_size', 96, 'Environment frame screen height.')
-flags.DEFINE_integer("stack_history", 8, "Stack previous states.")
-flags.DEFINE_integer("frame_skip", 4, "Skip n frames.")
+flags.DEFINE_string("environment_name", 'Pong', "Classic problem like Breakout, Pong")
+flags.DEFINE_integer('environment_height', 84, 'Environment frame screen height.')
+flags.DEFINE_integer('environment_width', 84, 'Environment frame screen width.')
+flags.DEFINE_integer('environment_frame_skip', 4, 'Number of frames to skip.')
+flags.DEFINE_integer('environment_frame_stack', 8, 'Number of frames to stack.')
+flags.DEFINE_integer('max_episode_steps', 108000, 'Maximum steps per episode. 0 means no limit.')
 flags.DEFINE_bool("gray_scale", True, "Gray scale observation image.")
 flags.DEFINE_bool('clip_reward', True, 'Clip reward in the range [-1, 1], default on.')
 flags.DEFINE_bool('done_on_life_loss', True, 'End of game if loss a life, default on.')
@@ -66,31 +69,29 @@ def main(argv):
     del argv
 
     runtime_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    random_state = np.random.RandomState(FLAGS.seed)  # pylint: disable=no-member
+    torch.manual_seed(FLAGS.seed)
+    if torch.backends.cudnn.enabled:
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
 
-    self_play_envs = [
-        create_atari_environment(
-            FLAGS.environment_name,
-            FLAGS.seed + i**2,
-            FLAGS.stack_history,
-            FLAGS.frame_skip,
-            FLAGS.screen_size,
-            clip_reward=FLAGS.clip_reward,
-            done_on_life_loss=FLAGS.done_on_life_loss,
-            grayscale=FLAGS.gray_scale,
+    def environment_builder(random_int=0):
+        return create_atari_environment(
+            env_name=FLAGS.environment_name,
+            screen_height=FLAGS.environment_height,
+            screen_width=FLAGS.environment_width,
+            frame_skip=FLAGS.environment_frame_skip,
+            frame_stack=FLAGS.environment_frame_stack,
+            max_episode_steps=FLAGS.max_episode_steps,
+            seed=FLAGS.seed + int(random_int),
+            noop_max=30,
+            terminal_on_life_loss=False,
+            clip_reward=False,
         )
-        for i in range(FLAGS.num_actors)
-    ]
 
-    eval_env = create_atari_environment(
-        FLAGS.environment_name,
-        FLAGS.seed + 2,
-        FLAGS.stack_history,
-        FLAGS.frame_skip,
-        FLAGS.screen_size,
-        clip_reward=FLAGS.clip_reward,
-        done_on_life_loss=FLAGS.done_on_life_loss,
-        grayscale=FLAGS.gray_scale,
-    )
+    self_play_envs = [environment_builder(i) for i in range(FLAGS.num_actors)]
+
+    eval_env = environment_builder(2)
 
     input_shape = self_play_envs[0].observation_space.shape
     num_actions = self_play_envs[0].action_space.n
@@ -130,7 +131,15 @@ def main(argv):
         config.reward_support_size,
     )
 
-    replay = PrioritizedReplay(config.replay_capacity, config.priority_exponent, config.importance_sampling_exponent)
+    def importance_sampling_exponent_schedule(x):
+        return config.importance_sampling_exponent
+
+    replay = PrioritizedReplay(
+        config.replay_capacity,
+        config.priority_exponent,
+        importance_sampling_exponent_schedule,
+        random_state,
+    )
 
     # Use the stop_event to signaling actors to stop running.
     stop_event = multiprocessing.Event()
