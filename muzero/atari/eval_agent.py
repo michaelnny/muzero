@@ -24,14 +24,14 @@ from muzero.network import MuZeroAtariNet
 from muzero.pipeline import load_checkpoint
 from muzero.mcts import uct_search
 from muzero.config import make_atari_config
-from muzero.gym_env import create_atari_environment
+from muzero.gym_env import create_atari_environment, record_video_env
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string("environment_name", 'BreakoutNoFrameskip-v4', "Classic problem like Breakout, Pong")
+flags.DEFINE_string('environment_name', 'BreakoutNoFrameskip-v4', 'Classic problem like Breakout, Pong')
 flags.DEFINE_integer('screen_size', 84, 'Environment frame screen height.')
-flags.DEFINE_integer("stack_history", 4, "Stack previous states.")
-flags.DEFINE_integer("frame_skip", 4, "Skip n frames.")
-flags.DEFINE_bool("gray_scale", True, "Gray scale observation image.")
+flags.DEFINE_integer('stack_history', 4, 'Stack previous states.')
+flags.DEFINE_integer('frame_skip', 4, 'Skip n frames.')
+flags.DEFINE_bool('gray_scale', True, 'Gray scale observation image.')
 flags.DEFINE_bool('clip_reward', True, 'Clip reward in the range [-1, 1], default on.')
 flags.DEFINE_bool('done_on_life_loss', True, 'End of game if loss a life, default on.')
 
@@ -84,11 +84,7 @@ def main(argv):
     network.eval()
 
     if FLAGS.record_video_dir is not None and FLAGS.record_video_dir != '':
-        full_path = f"{FLAGS.record_video_dir}_{eval_env.spec.id}"
-        path = Path(full_path)
-        if not path.exists():
-            path.mkdir(parents=True, exist_ok=True)
-        eval_env = gym.wrappers.RecordVideo(eval_env, full_path)
+        eval_env = record_video_env(eval_env, FLAGS.record_video_dir)
 
     steps = 0
     returns = 0.0

@@ -34,10 +34,15 @@ def initialize_weights(net: nn.Module) -> None:
     """Initialize weights for Conv2d and Linear layers using kaming initializer."""
     assert isinstance(net, nn.Module)
 
-    for m in net.modules():
-        if isinstance(m, (nn.Conv2d, nn.Linear)):
-            # nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
-            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')
+    for module in net.modules():
+        if isinstance(module, (nn.Conv2d, nn.Linear)):
+            nn.init.kaiming_normal_(module.weight, nonlinearity='relu')
+
+            # nn.init.kaiming_normal_(module.weight, mode='fan_out', nonlinearity='relu')
+
+            # nn.init.xavier_normal_(module.weight)
+            if module.bias is not None:
+                nn.init.zeros_(module.bias)
 
 
 class MuZeroNet(nn.Module):
@@ -552,6 +557,8 @@ class MuZeroBoardGameNet(MuZeroNet):  # pylint: disable=abstract-method
 
         prediction_input_shape = (num_planes, h, w)
         self.prediction_net = PredictionConvNet(prediction_input_shape, num_actions, num_res_blocks, num_planes, 1)
+
+        initialize_weights(self)
 
     def represent(self, x: torch.Tensor) -> torch.Tensor:
         hidden_state = self.represent_net(x)

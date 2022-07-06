@@ -30,24 +30,31 @@ from muzero.gym_env import create_atari_environment
 from muzero.pipeline import run_self_play, run_training, run_data_collector, run_evaluator, load_checkpoint, load_from_file
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string("environment_name", 'Pong', "Classic problem like Breakout, Pong")
+flags.DEFINE_string('environment_name', 'Pong', 'Classic problem like Breakout, Pong')
 flags.DEFINE_integer('environment_height', 84, 'Environment frame screen height.')
 flags.DEFINE_integer('environment_width', 84, 'Environment frame screen width.')
 flags.DEFINE_integer('environment_frame_skip', 4, 'Number of frames to skip.')
 flags.DEFINE_integer('environment_frame_stack', 8, 'Number of frames to stack.')
 flags.DEFINE_integer('max_episode_steps', 108000, 'Maximum steps per episode. 0 means no limit.')
-flags.DEFINE_bool("gray_scale", True, "Gray scale observation image.")
+flags.DEFINE_bool('gray_scale', True, 'Gray scale observation image.')
 flags.DEFINE_bool('clip_reward', True, 'Clip reward in the range [-1, 1], default on.')
 flags.DEFINE_bool('done_on_life_loss', True, 'End of game if loss a life, default on.')
-
-
 flags.DEFINE_integer('num_actors', 6, 'Number of self-play actor processes.')
+
+flags.DEFINE_integer('num_training_steps', int(10e6), 'Number of traning steps.')
+flags.DEFINE_integer('batch_size', 128, 'Batch size for traning.')
+flags.DEFINE_integer('replay_capacity', 200000, 'Maximum replay size.')
+flags.DEFINE_integer('min_replay_size', 10000, 'Minimum replay size before start to do traning.')
+flags.DEFINE_float(
+    'priority_exponent', 0.0, 'Priotiry exponent used in prioritized replay, 0 means using uniform random replay.'
+)
+flags.DEFINE_float('importance_sampling_exponent', 0.0, 'Importance sampling exponent value.')
 
 flags.DEFINE_integer('seed', 1, 'Seed the runtime.')
 flags.DEFINE_bool('use_tensorboard', True, 'Monitor performance with Tensorboard, default on.')
 flags.DEFINE_bool('clip_grad', True, 'Clip gradient, default off.')
 
-flags.DEFINE_string('checkpoint_dir', 'checkpoints/atari', 'Path for checkpoint file.')
+flags.DEFINE_string('checkpoint_dir', 'checkpoints', 'Path for save checkpoint files.')
 flags.DEFINE_string(
     'load_checkpoint_file',
     '',
@@ -59,7 +66,7 @@ flags.DEFINE_integer(
     -1,
     'The frequency (measured in number added in replay) to save self-play samples in replay, default -1 do not save.',
 )
-flags.DEFINE_string('samples_save_dir', 'samples/atari', 'Path for save self-play samples in replay to file.')
+flags.DEFINE_string('samples_save_dir', 'samples', 'Path for save self-play samples in replay to file.')
 flags.DEFINE_string('load_samples_file', '', 'Load the replay samples from file.')
 flags.DEFINE_string('tag', '', 'Add tag to Tensorboard log file.')
 
@@ -100,7 +107,13 @@ def main(argv):
     if FLAGS.tag is not None and FLAGS.tag != '':
         tag = f'{tag}_{FLAGS.tag}'
 
-    config = make_atari_config(FLAGS.use_tensorboard, FLAGS.clip_grad)
+    config = make_atari_config(
+        num_training_steps=FLAGS.num_training_steps,
+        batch_size=FLAGS.batch_size,
+        min_replay_size=FLAGS.min_replay_size,
+        use_tensorboard=FLAGS.use_tensorboard,
+        clip_grad=FLAGS.clip_grad,
+    )
 
     network = MuZeroAtariNet(
         input_shape,
@@ -131,13 +144,10 @@ def main(argv):
         config.reward_support_size,
     )
 
-    def importance_sampling_exponent_schedule(x):
-        return config.importance_sampling_exponent
-
     replay = PrioritizedReplay(
-        config.replay_capacity,
-        config.priority_exponent,
-        importance_sampling_exponent_schedule,
+        FLAGS.replay_capacity,
+        FLAGS.priority_exponent,
+        FLAGS.importance_sampling_exponent,
         random_state,
     )
 

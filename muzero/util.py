@@ -35,6 +35,7 @@ def normalize_hidden_state(hidden_state: torch.Tensor) -> torch.Tensor:
     normalized = (hidden_state - _min) / (_max - _min + 1e-8)
     return normalized
 
+    # This seems to work better for CNN networks.
     # max_hidden_state = torch.max(hidden_state, 1, keepdims=True)[0]
     # min_hidden_state = torch.min(hidden_state, 1, keepdims=True)[0]
     # hidden_state_range = max_hidden_state - min_hidden_state

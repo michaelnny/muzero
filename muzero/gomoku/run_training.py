@@ -20,6 +20,7 @@ from absl import logging
 import os
 import multiprocessing
 import threading
+import numpy as np
 import torch
 from torch.optim.lr_scheduler import MultiStepLR
 
@@ -41,11 +42,22 @@ FLAGS = flags.FLAGS
 flags.DEFINE_integer('board_size', 9, 'Board size for Gomoku.')
 flags.DEFINE_integer('num_to_win', 5, 'Number in a row to win.')
 flags.DEFINE_integer('stack_history', 4, 'Stack previous states.')
+
+flags.DEFINE_integer('num_actors', 4, 'Number of self-play actor processes.')
+flags.DEFINE_integer('num_training_steps', 1000000, 'Number of traning steps.')
+flags.DEFINE_integer('batch_size', 128, 'Batch size for traning.')
+flags.DEFINE_integer('replay_capacity', 200000, 'Maximum replay size.')
+flags.DEFINE_integer('min_replay_size', 10000, 'Minimum replay size before start to do traning.')
+flags.DEFINE_float(
+    'priority_exponent', 0.0, 'Priotiry exponent used in prioritized replay, 0 means using uniform random replay.'
+)
+flags.DEFINE_float('importance_sampling_exponent', 0.0, 'Importance sampling exponent value.')
+
 flags.DEFINE_integer('seed', 1, 'Seed the runtime.')
 flags.DEFINE_bool('use_tensorboard', True, 'Monitor performance with Tensorboard, default on.')
 flags.DEFINE_bool('clip_grad', False, 'Clip gradient, default off.')
 flags.DEFINE_float('initial_elo', 0.0, 'Initial elo rating, for evaluation agent performance only.')
-flags.DEFINE_string('checkpoint_dir', 'checkpoints/gomoku', 'Path for checkpoint file.')
+flags.DEFINE_string('checkpoint_dir', 'checkpoints', 'Path for save checkpoint files.')
 flags.DEFINE_string(
     'load_checkpoint_file',
     '',
@@ -57,7 +69,7 @@ flags.DEFINE_integer(
     10000,
     'The frequency (measured in number added in replay) to save self-play samples in replay.',
 )
-flags.DEFINE_string('samples_save_dir', 'samples/gomoku', 'Path for save self-play samples in replay to file.')
+flags.DEFINE_string('samples_save_dir', 'samples', 'Path for save self-play samples in replay to file.')
 flags.DEFINE_string('load_samples_file', '', 'Load the replay samples from file.')
 flags.DEFINE_string('tag', '', 'Add tag to Tensorboard log file.')
 
@@ -67,6 +79,11 @@ def main(argv):
     del argv
 
     runtime_device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    random_state = np.random.RandomState(FLAGS.seed)  # pylint: disable=no-member
+    torch.manual_seed(FLAGS.seed)
+    if torch.backends.cudnn.enabled:
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
 
     self_play_envs = [
         GomokuEnv(board_size=FLAGS.board_size, num_to_win=FLAGS.num_to_win, stack_history=FLAGS.stack_history)
@@ -81,7 +98,13 @@ def main(argv):
     if FLAGS.tag is not None and FLAGS.tag != '':
         tag = f'{tag}_{FLAGS.tag}'
 
-    config = make_gomoku_config(FLAGS.use_tensorboard, FLAGS.clip_grad)
+    config = make_gomoku_config(
+        num_training_steps=FLAGS.num_training_steps,
+        batch_size=FLAGS.batch_size,
+        min_replay_size=FLAGS.min_replay_size,
+        use_tensorboard=FLAGS.use_tensorboard,
+        clip_grad=FLAGS.clip_grad,
+    )
 
     network = MuZeroBoardGameNet(input_shape, num_actions, config.num_res_blocks, config.num_planes)
     optimizer = torch.optim.Adam(network.parameters(), lr=config.lr_init, weight_decay=config.weight_decay)
@@ -94,7 +117,12 @@ def main(argv):
     old_ckpt_network = MuZeroBoardGameNet(input_shape, num_actions, config.num_res_blocks, config.num_planes)
     new_ckpt_network = MuZeroBoardGameNet(input_shape, num_actions, config.num_res_blocks, config.num_planes)
 
-    replay = PrioritizedReplay(config.replay_capacity, config.priority_exponent, config.importance_sampling_exponent)
+    replay = PrioritizedReplay(
+        FLAGS.replay_capacity,
+        FLAGS.priority_exponent,
+        FLAGS.importance_sampling_exponent,
+        random_state,
+    )
 
     # Use the stop_event to signaling actors to stop running.
     stop_event = multiprocessing.Event()

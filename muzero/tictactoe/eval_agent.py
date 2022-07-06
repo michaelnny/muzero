@@ -26,19 +26,17 @@ from muzero.mcts import uct_search
 from muzero.config import make_tictactoe_config
 
 FLAGS = flags.FLAGS
-flags.DEFINE_bool('use_mlp_net', False, 'Use FC MLP network instead Conv2d network, default on.')
+flags.DEFINE_bool('use_mlp_net', True, 'Use FC MLP network instead Conv2d network, default on.')
 flags.DEFINE_integer('seed', 5, 'Seed the runtime.')
 
 flags.DEFINE_string(
     'load_black_checkpoint_file',
-    # 'saved_checkpoints/TicTacToe_train_steps_87000',
-    'checkpoints/tictactoe/TicTacToe_resnet_train_steps_100000',
+    'saved_checkpoints/TicTacToe_train_steps_35000',
     'Load the last checkpoint from file.',
 )
 flags.DEFINE_string(
     'load_white_checkpoint_file',
-    # 'saved_checkpoints/TicTacToe_train_steps_87000',
-    'checkpoints/tictactoe/TicTacToe_resnet_train_steps_100000',
+    'saved_checkpoints/TicTacToe_train_steps_35000',
     'Load the last checkpoint from file.',
 )
 
@@ -109,7 +107,7 @@ def main(argv):
         steps += 1
         returns += reward
 
-        time.sleep(0.45)
+        time.sleep(0.5)
 
         if done:
             break

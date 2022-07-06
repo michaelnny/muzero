@@ -115,7 +115,7 @@ class LearnerTracker:
 
         time_stats = self.get_time_stat()
         self._writer.add_scalar('learner(train_steps)/step_rate(minutes)', time_stats['step_rate'] * 60, train_steps)
-        self._writer.add_scalar('learner(train_steps)/run_duration(minutes)', time_stats['duration'] / 60, train_steps)
+        # self._writer.add_scalar('learner(train_steps)/run_duration(minutes)', time_stats['duration'] / 60, train_steps)
 
     def get_time_stat(self) -> Mapping[Text, float]:
         """Returns statistics as a dictionary."""
@@ -163,7 +163,7 @@ class EvaluatorTracker:
         # self._writer.add_scalar('episode_steps/mean', np.mean(episode_steps), self._num_steps_since_reset)
 
         self._writer.add_scalar(
-            'evaluator(train_steps)/mean_episode_returns', np.mean(episode_returns), self._num_steps_since_reset
+            'evaluator(train_steps)/mean_episode_return', np.mean(episode_returns), self._num_steps_since_reset
         )
         self._writer.add_scalar(
             'evaluator(train_steps)/mean_episode_steps', np.mean(episode_steps), self._num_steps_since_reset

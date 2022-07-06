@@ -16,29 +16,27 @@ from absl import app
 from absl import flags
 from absl import logging
 import os
-from pathlib import Path
-import gym
 import torch
 
 from muzero.network import MuZeroMLPNet
-from muzero.gym_env import create_classic_environment
+from muzero.gym_env import create_classic_environment, record_video_env
 from muzero.pipeline import load_checkpoint
 from muzero.mcts import uct_search
 from muzero.config import make_classic_config
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string("environment_name", 'LunarLander-v2', "Classic problem like 'CartPole-v1', 'LunarLander-v2'")
-flags.DEFINE_integer("stack_history", 4, "Stack previous states.")
+flags.DEFINE_string('environment_name', 'CartPole-v1', "Classic problem like 'CartPole-v1', 'LunarLander-v2'")
+flags.DEFINE_integer('stack_history', 4, 'Stack previous states.')
 
 flags.DEFINE_integer('seed', 5, 'Seed the runtime.')
 
 flags.DEFINE_string(
     'load_checkpoint_file',
-    # 'saved_checkpoints/CartPole-v1_train_steps_45000',
-    'saved_checkpoints/LunarLander-v2_train_steps_118000',
+    'saved_checkpoints/CartPole-v1_train_steps_44800',
+    # 'saved_checkpoints/LunarLander-v2_train_steps_58400',
     'Load the checkpoint from file.',
 )
-flags.DEFINE_string('record_video_dir', 'recordings/classic', 'Record play video.')
+flags.DEFINE_string('record_video_dir', 'recordings', 'Record play video.')
 
 
 def main(argv):
@@ -66,11 +64,7 @@ def main(argv):
     network.eval()
 
     if FLAGS.record_video_dir is not None and FLAGS.record_video_dir != '':
-        full_path = f"{FLAGS.record_video_dir}_{eval_env.spec.id}"
-        path = Path(full_path)
-        if not path.exists():
-            path.mkdir(parents=True, exist_ok=True)
-        eval_env = gym.wrappers.RecordVideo(eval_env, full_path)
+        eval_env = record_video_env(eval_env, FLAGS.record_video_dir)
 
     steps = 0
     returns = 0.0

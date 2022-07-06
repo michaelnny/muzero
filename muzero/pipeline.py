@@ -13,7 +13,7 @@
 # limitations under the License.
 # ==============================================================================
 from absl import logging
-from typing import Iterable, List, Mapping, Text, Any
+from typing import Iterable, List, Tuple, Mapping, Text, Any
 from pathlib import Path
 import sys
 import signal
@@ -80,18 +80,15 @@ def run_self_play(
     network.eval()
     game = 0
 
-    while not stop_event.is_set():
-        network.eval()
-
-        # For each new game.
+    while not stop_event.is_set():  # For each new game.
         obs = env.reset()
         done = False
         episode_trajectory = []
-
         steps = 0
 
         # Play and record transitions.
-        while not done:
+        # the second check is necessary becase the pipeline could have already stopped while the actor is in the middle of a game.
+        while not done and not stop_event.is_set():
             # Make a copy of current player id.
             player_id = copy.deepcopy(env.current_player)
 
@@ -113,7 +110,6 @@ def run_self_play(
                 tracker.step(reward, done)
 
             episode_trajectory.append((obs, action, reward, pi_prob, root_value, player_id))
-
             obs = next_obs
 
             # Send samples to learner every N steps on Atari games.
@@ -146,8 +142,6 @@ def run_self_play(
                 del (observations, actions, rewards, pi_probs, root_values, priorities, target_values)
 
         game += 1
-        if game % 1000 == 0:
-            logging.info(f'Self-play actor {rank} played {game} games')
 
         # Unpack list of tuples into seperate lists.
         observations, actions, rewards, pi_probs, root_values, player_ids = map(list, zip(*episode_trajectory))
@@ -239,8 +233,7 @@ def run_training(  # noqa: C901
         if replay.size < config.min_replay_size or replay.size < config.batch_size:
             continue
 
-        # Signaling other parties to stop running pipeline.
-        if train_steps_counter.value >= config.training_steps:
+        if train_steps_counter.value >= config.num_training_steps:
             break
 
         transitions, indices, weights = replay.sample(config.batch_size)
@@ -269,9 +262,7 @@ def run_training(  # noqa: C901
             state_to_save = get_state_to_save()
             ckpt_file = ckpt_dir / f'{ckpt_prefix}_{train_steps_counter.value}'
             create_checkpoint(state_to_save, ckpt_file)
-
             checkpoint_files.append(ckpt_file)
-
             actor_network.load_state_dict(network.state_dict())
             actor_network.eval()
 
@@ -284,9 +275,15 @@ def run_training(  # noqa: C901
         if config.train_delay is not None and config.train_delay > 0 and train_steps_counter.value > 1:
             time.sleep(config.train_delay)
 
+    # Signaling other parties to stop running pipeline.
     stop_event.set()
-    time.sleep(60 * 5)
+    time.sleep(10)
     data_queue.put('STOP')
+
+    # Create a final checkpoint.
+    state_to_save = get_state_to_save()
+    ckpt_file = ckpt_dir / f'{ckpt_prefix}_{train_steps_counter.value}_final'
+    create_checkpoint(state_to_save, ckpt_file)
 
 
 def run_board_game_evaluator(
@@ -409,7 +406,7 @@ def run_evaluator(
     checkpoint_files: List,
     stop_event: multiprocessing.Event,
     tag: str = None,
-    num_episodes: int = 3,
+    num_episodes: int = 1,
 ) -> None:
     """
     Monitoring training progress by play few games with the most recent new checkpoint.
@@ -424,7 +421,7 @@ def run_evaluator(
         checkpoint_files: a shared list contains the full path for the most recent new checkpoint.
         stop_event: a multiprocessing.Event signaling to stop running pipeline.
         tag: add tag to tensorboard log dir.
-        num_episodes: run evaluation for N episodes, default 3.
+        num_episodes: run evaluation for N episodes, default 1.
 
     """
 
@@ -541,7 +538,12 @@ def run_data_collector(
             pass
 
 
-def calc_loss(network: MuZeroNet, device: torch.device, transitions: Transition, weights: torch.Tensor) -> torch.Tensor:
+def calc_loss(
+    network: MuZeroNet,
+    device: torch.device,
+    transitions: Transition,
+    weights: torch.Tensor,
+) -> Tuple[torch.Tensor, np.ndarray]:
     """Given a network and batch of transitions, compute the loss for MuZero agent."""
     # [B, state_shape]
     state = torch.from_numpy(transitions.state).to(device=device, dtype=torch.float32, non_blocking=True)
@@ -552,7 +554,6 @@ def calc_loss(network: MuZeroNet, device: torch.device, transitions: Transition,
     # [B, T, num_actions]
     target_pi_prob = torch.from_numpy(transitions.pi_prob).to(device=device, dtype=torch.float32, non_blocking=True)
 
-    # with torch.no_grad():
     # Convert scalar targets into transformed support (probabilities).
     if network.mse_loss_for_value:
         target_value = target_value_scalar
@@ -605,7 +606,8 @@ def calc_loss(network: MuZeroNet, device: torch.device, transitions: Transition,
             pred_values_scalar = pred_values.squeeze(-1)
         else:
             pred_values_scalar = logits_to_transformed_expected_value(pred_values, network.value_support_size).squeeze(-1)
-        priorities = torch.abs(pred_values_scalar[:, 0] - target_value_scalar[:, 0]).cpu().numpy()
+        priorities = (pred_values_scalar[:, 0] - target_value_scalar[:, 0]).abs().cpu().numpy()
+        # priorities = torch.mean(pred_values_scalar - target_value_scalar, dim=-1).abs().cpu().numpy()
 
     return loss, priorities
 
@@ -755,7 +757,7 @@ def make_unroll_sequence(
 
         yield (
             Transition(
-                state=observations[t],  # no staking for observation, since it is only used to get initial hidden state.
+                state=observations[t],  # no stacking for observation, since it is only used to get initial hidden state.
                 action=stacked_action,
                 reward=stacked_reward,
                 value=stacked_value,

@@ -54,47 +54,6 @@ class AtariEnvironmentTest(parameterized.TestCase):
             env.close()
 
     @parameterized.named_parameters(
-        ('sizes_84x84x1', (84, 84, 1)), ('sizes_84x84x4', (84, 84, 4)), ('sizes_96x72x8', (96, 72, 8))
-    )
-    def test_env_channel_last_different_sizes(self, sizes):
-        seed = 1
-
-        env = gym_env.create_atari_environment(
-            env_name='Pong',
-            seed=seed,
-            screen_height=sizes[0],
-            screen_width=sizes[1],
-            frame_stack=sizes[2],
-            channel_first=False,
-            scale_obs=False,
-        )
-
-        if sizes[2] > 1:
-            expected_obs_shape = (sizes[0], sizes[1], sizes[2] * 2)
-            expected_dtype = np.float32
-        else:
-            expected_obs_shape = sizes
-            expected_dtype = np.uint8
-
-        obs = env.reset()
-
-        self.assertEqual(env.observation_space.shape, expected_obs_shape)
-        self.assertEqual(env.observation_space.dtype, expected_dtype)
-        self.assertEqual(obs.shape, expected_obs_shape)
-        self.assertEqual(obs.dtype, expected_dtype)
-        # self.assertTrue(obs.flags['C_CONTIGUOUS'])
-
-        for _ in range(3):  # 3 games
-            obs = env.reset()
-            for _ in range(20):  # each game 20 steps
-                obs, r, done, _ = env.step(env.action_space.sample())
-                self.assertEqual(obs.shape, expected_obs_shape)
-                self.assertEqual(obs.dtype, expected_dtype)
-                if done:
-                    break
-        env.close()
-
-    @parameterized.named_parameters(
         ('sizes_1x84x84', (1, 84, 84)), ('sizes_4x84x84', (4, 84, 84)), ('sizes_8x96x72', (8, 96, 72))
     )
     def test_env_channel_first_different_sizes(self, sizes):
@@ -106,7 +65,6 @@ class AtariEnvironmentTest(parameterized.TestCase):
             screen_height=sizes[1],
             screen_width=sizes[2],
             frame_stack=sizes[0],
-            channel_first=True,
             scale_obs=False,
         )
 
