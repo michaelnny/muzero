@@ -13,7 +13,7 @@ FLAGS.use_tensorboard = False
 FLAGS.num_actors = 2
 FLAGS.replay_capacity = 100
 FLAGS.min_replay_size = 10
-FLAGS.num_training_steps = 10
+FLAGS.num_training_steps = 5
 
 
 class RunAtariGameTest(absltest.TestCase):
