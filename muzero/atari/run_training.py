@@ -35,7 +35,7 @@ flags.DEFINE_integer('environment_height', 84, 'Environment frame screen height.
 flags.DEFINE_integer('environment_width', 84, 'Environment frame screen width.')
 flags.DEFINE_integer('environment_frame_skip', 4, 'Number of frames to skip.')
 flags.DEFINE_integer('environment_frame_stack', 8, 'Number of frames to stack.')
-flags.DEFINE_integer('max_episode_steps', 108000, 'Maximum steps per episode. 0 means no limit.')
+flags.DEFINE_integer('max_episode_steps', 108000, 'Maximum steps (before frame skip) per episode.')
 flags.DEFINE_bool('gray_scale', True, 'Gray scale observation image.')
 flags.DEFINE_bool('clip_reward', True, 'Clip reward in the range [-1, 1], default on.')
 flags.DEFINE_bool('done_on_life_loss', True, 'End of game if loss a life, default on.')
@@ -43,7 +43,7 @@ flags.DEFINE_integer('num_actors', 6, 'Number of self-play actor processes.')
 
 flags.DEFINE_integer('num_training_steps', int(10e6), 'Number of traning steps.')
 flags.DEFINE_integer('batch_size', 128, 'Batch size for traning.')
-flags.DEFINE_integer('replay_capacity', 200000, 'Maximum replay size.')
+flags.DEFINE_integer('replay_capacity', int(1e6), 'Maximum replay size.')
 flags.DEFINE_integer('min_replay_size', 10000, 'Minimum replay size before start to do traning.')
 flags.DEFINE_float(
     'priority_exponent', 0.0, 'Priotiry exponent used in prioritized replay, 0 means using uniform random replay.'
@@ -82,7 +82,7 @@ def main(argv):
         torch.backends.cudnn.benchmark = False
         torch.backends.cudnn.deterministic = True
 
-    def environment_builder(random_int=0):
+    def environment_builder():
         return create_atari_environment(
             env_name=FLAGS.environment_name,
             screen_height=FLAGS.environment_height,
@@ -90,15 +90,15 @@ def main(argv):
             frame_skip=FLAGS.environment_frame_skip,
             frame_stack=FLAGS.environment_frame_stack,
             max_episode_steps=FLAGS.max_episode_steps,
-            seed=FLAGS.seed + int(random_int),
+            seed=random_state.randint(1, 2**32),
             noop_max=30,
             terminal_on_life_loss=False,
             clip_reward=False,
         )
 
-    self_play_envs = [environment_builder(i) for i in range(FLAGS.num_actors)]
+    self_play_envs = [environment_builder() for _ in range(FLAGS.num_actors)]
 
-    eval_env = environment_builder(2)
+    eval_env = environment_builder()
 
     input_shape = self_play_envs[0].observation_space.shape
     num_actions = self_play_envs[0].action_space.n
