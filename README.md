@@ -54,6 +54,9 @@ A PyTorch implementation of DeepMind's MuZero agent.
 # upgrade pip
 python3 -m pip install --upgrade pip setuptools
 
+# install swig which is required for box-2d
+brew install swig
+
 # install ffmpeg for recording agent self-play
 brew install ffmpeg
 
